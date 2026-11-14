@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'nu_session.dart';
+import 'nu_protocol.dart';
 import 'nu_configuration.dart';
 import 'usb_port_diagnostics.dart';
 
@@ -183,164 +184,181 @@ class NuCanonConnection {
     }
   }
 
-  /// Builds a raw USB bulk OUT record matching the *actual* first
-  /// Windows 02/02 request at sequence 0x29 in plm222.pcapng.
-  /// Header is 48 bytes, including the 16-byte descending NU preamble.
-  /// The raw USB payload starts at byte 48, not byte 56.
+  // Retained public test helpers; now using a single typed wire builder.
   static Uint8List capturedBulkOutFrame(Uint8List bytes,{
     required int sequence,
-  }) {
-    if(bytes.isEmpty||bytes.length>383||sequence<0||sequence>255){
-      throw const FormatException('NU bulk test chunk must be 1..383 bytes');
-    }
-    final count=bytes.length;
-    final frame=Uint8List(1460);
-    frame.setAll(0,NuHello.prefix);
-    frame.setAll(16,<int>[
-      0x55,0x4e,0x54,0x24,
-      count>>8,count&0xff,0x02,0x02,
-      sequence,0x00,0x00,0x00,0x00,0x00,0x01,0x00,
-      0x01,0x00,0x30,0xf0,
-      count&0xff,count>>8,0x00,0x00,
-      0x00,0x00,0x80,sequence,
-      0x00,0x12,0x72,0x20,
-    ]);
-    frame.setRange(48,48+count,bytes);
-    return frame;
+  }) => NuWire.bulkOut(bytes,sequence:sequence);
+
+  static Uint8List capturedBulkPreparationRequest() =>
+    NuWire.prepare(sequence:40);
+
+  static bool isBulkPreparationResponse(Uint8List reply) {
+    try {
+      final r=NuReply.parse(reply);
+      return r.command==9&&r.sequence==40&&r.bodyLength==32;
+    }on FormatException{return false;}
   }
 
-  /// Windows sent this 02/08 request to printer endpoint 01 directly
-  /// before the first 383-byte 02/02 bulk OUT transfer. This is an
-  /// experimental setup step; the meaning of its 64-byte response remains
-  /// unknown. Never send automatically outside an explicit print test.
-  static Uint8List capturedBulkPreparationRequest() {
-    final frame=Uint8List(1460);
-    frame.setAll(0,NuHello.prefix);
-    frame.setAll(16,const <int>[
-      0x55,0x4e,0x54,0x24,0x00,0x40,0x02,0x08,
-      0x28,0x00,0x00,0x00,0x00,0x00,0x01,0x00,
-      0x01,0x00,0x0b,0x00,0x40,0x00,0x00,0x00,
-      0x04,0xf8,0x80,0x28,0x40,0x10,0x92,0x34
-    ]);
-    return frame;
-  }
-
-  static bool isBulkPreparationResponse(Uint8List reply) =>
-      reply.length==64 &&
-      reply[0]==0x55 && reply[1]==0x4e &&
-      reply[2]==0x54 && reply[3]==0x24 &&
-      reply[4]==0 && reply[5]==0x20 &&
-      reply[6]==2 && reply[7]==9 && reply[8]==0x28;
-
-  /// NU records travel over TCP, so reads may return partial or multiple
-  /// frames. A response record begins with the 32-byte NU header; the
-  /// big-endian 16-bit size at offset 4 is the number of body bytes.
-  Future<Uint8List> _readNuResponse(Duration timeout) async {
-    final header=await _readExact(32,timeout);
-    if(header[0]!=0x55||header[1]!=0x4e||
-       header[2]!=0x54||header[3]!=0x24){
-      throw const FormatException('NU response magic mismatch');
-    }
-    final bodyLength=(header[4]<<8)|header[5];
-    if(bodyLength>4096) {
-      throw FormatException('NU response body too large: $bodyLength');
-    }
-    if(bodyLength==0)return header;
-    final body=await _readExact(bodyLength,timeout);
-    return Uint8List.fromList([...header,...body]);
-  }
-
-  /// Windows sends 02/08 before 02/02, but the hub replies 02/03
-  /// before its delayed 02/09. Validate the *requested* transaction ID
-  /// rather than assuming all replies arrive in request order.
   static bool isBulkOutCompletion(Uint8List reply,{
     required int sequence,required int count,
-  }) => reply.length==32 &&
-       reply[0]==0x55 && reply[1]==0x4e &&
-       reply[2]==0x54 && reply[3]==0x24 &&
-       reply[4]==0 && reply[5]==0 &&
-       reply[6]==2 && reply[7]==3 &&
-       reply[8]==sequence && reply[26]==0x80 &&
-       reply[27]==sequence &&
-       reply[20]==(count&255) && reply[21]==(count>>8);
-
-  Future<bool> _awaitBulkOutCompletion({
-    required int sequence,required int count,
-    required int completedBefore,
-    required bool preparationObserved,
-  }) async {
-    final deadline=DateTime.now().add(const Duration(seconds:8));
-    var prepared=preparationObserved;
-    for(var frames=0;frames<8;frames++){
-      final remaining=deadline.difference(DateTime.now());
-      if(remaining<=Duration.zero)break;
-      Uint8List response;
-      try {
-        response=await _readNuResponse(remaining);
-      } on TimeoutException {
-        break;
-      }
-      if(isBulkPreparationResponse(response)){
-        prepared=true;
-        continue;
-      }
-      if(isBulkOutCompletion(response,sequence:sequence,count:count)){
-        return prepared;
-      }
-      throw FormatException(
-        'Unexpected NU reply type ${response.length>=8?response[7]:-1} '
-        'seq ${response.length>=9?response[8]:-1} while awaiting '
-        'bulk OUT 02/03 seq $sequence; $completedBefore bytes '
-        'previously acknowledged. Print delivery uncertain, no retry.');
-    }
-    throw TimeoutException('NU bulk OUT 02/03 timeout for seq $sequence '
-      'after $completedBefore bytes acknowledged; '
-      'preparation 02/09 ${prepared?'seen':'not yet seen'}. '
-      'Print delivery uncertain, no retry.');
+  }) {
+    try {
+      final r=NuReply.parse(reply);
+      return r.command==3&&r.sequence==sequence&&r.bodyLength==0&&
+        r.reportedLength==count;
+    }on FormatException{return false;}
   }
 
-  /// Experimental bulk-OUT sender. The 383-byte Windows request is the
-  /// only observed nonempty OUT shape; it is NOT proven to generalize to
-  /// arbitrary IVEC jobs. This is explicitly opt-in and never auto-retries.
-  /// We require the verified printer-class ID before transmitting anything.
-  Future<String> experimentalNuPrint(Uint8List raster) async {
-    if(!isConnected || _socket==null || printerInterface?.bulkOut?.address!=1 ||
-       ieee1284DeviceId==null || !ieee1284DeviceId!.contains('IVEC')){
-      throw StateError('Connect, verify configuration and read Canon ID first');
+  /// NU replies have NO client preamble: 32-byte header plus declared body.
+  /// TCP segmentation and coalescing are handled by the socket byte buffer.
+  Future<Uint8List> _readNuResponse(Duration timeout) async {
+    final header=await _readExact(32,timeout);
+    if(header[0]!=85||header[1]!=78||header[2]!=84||header[3]!=36){
+      throw const FormatException('NU reply magic mismatch');
     }
-    if(_printing)throw StateError('Print already in progress');
+    final bodyLength=(header[4]<<8)|header[5];
+    if(bodyLength>4096)throw const FormatException('NU body exceeds bound');
+    if(bodyLength==0)return header;
+    final body=await _readExact(bodyLength,timeout);
+    return Uint8List.fromList(<int>[...header,...body]);
+  }
+
+  /// Each diagnostic line includes protocol direction, opcode, full 16-bit
+  /// sequence, requested/returned length and the first 48 raw bytes.
+  /// This may reveal up to 16 bytes of printer status in RX. Share carefully.
+  final List<String> _printTrace=<String>[];
+  String get printTrace => _printTrace.join('\n');
+  void _logPrint(String s) {
+    if(_printTrace.length<50000) {
+      _printTrace.add(DateTime.now().toIso8601String()+' '+s);
+    } else if(_printTrace.length==50000) {
+      _printTrace.add('TRACE TRUNCATED after 50000 records');
+    }
+  }
+
+  Future<void> _sendTracked(Uint8List frame,int command,int sequence,
+      int count,NuPendingReplies pending) async {
+    final socket=_socket;
+    if(socket==null||_ended){
+      throw const SocketException('NU session ended during print');
+    }
+    if(NuWire.txSequence(frame)!=sequence){
+      throw StateError('NU TX sequence encoding mismatch');
+    }
+    pending.add(command,sequence,count);
+    _logPrint('TX 02/'+command.toRadixString(16).padLeft(2,'0')+
+      ' seq='+sequence.toString()+' count='+count.toString()+
+      ' HEX48='+NuWire.hex(frame));
+    socket.add(frame);
+    await socket.flush();
+  }
+
+  /// Process an entire pending window. Independent correlation is essential:
+  /// the 02/09 prep response can arrive after later 02/03/02/05 replies.
+  Future<int> _drainTracked(NuPendingReplies pending) async {
+    var completedOut=0;
+    while(!pending.isEmpty) {
+      final oldest=pending.oldest!;
+      final remaining=oldest.deadline.difference(DateTime.now());
+      if(remaining<=Duration.zero) {
+        final msg='NU timed out awaiting 02/'+
+          (oldest.command+1).toRadixString(16).padLeft(2,'0')+
+          ' seq='+oldest.sequence.toString()+
+          ', '+pending.length.toString()+' pending';
+        _logPrint('TIMEOUT '+msg);
+        throw TimeoutException(msg+'. Print delivery uncertain, no retry');
+      }
+      try {
+        final bytes=await _readNuResponse(remaining);
+        final reply=NuReply.parse(bytes);
+        _logPrint('RX '+reply.summary+' HEX48='+NuWire.hex(bytes));
+        final matched=pending.accept(reply);
+        if(matched.command==2)completedOut+=matched.requested;
+        if(matched.command==4) {
+          _logPrint('READ seq='+reply.sequence.toString()+
+            ' USB data bytes='+reply.bodyLength.toString()+
+            ' (printer status is not decoded)');
+        }
+      }on TimeoutException{
+        final msg='NU response timeout: oldest 02/'+
+          (oldest.command+1).toRadixString(16).padLeft(2,'0')+
+          ' seq='+oldest.sequence.toString()+
+          '; '+pending.length.toString()+' still pending';
+        _logPrint('TIMEOUT '+msg);
+        throw TimeoutException(msg+'. Print delivery uncertain, no retry');
+      }
+    }
+    return completedOut;
+  }
+
+  /// Experimental bidirectional print pipeline. Windows sent prep40,
+  /// OUT41 (383-byte setup), then IN42/43/44 without waiting for replies.
+  /// Subsequent payload chunks use 1024-byte OUTs with interleaved reads.
+  /// The exact IN request flags, flow control and printer status semantics
+  /// are not yet validated. Matching NU responses NEVER prove paper output.
+  Future<String> experimentalNuPrint(Uint8List raster) async {
+    final iface=printerInterface;
+    if(!isConnected||_socket==null||
+        iface?.bulkOut?.address!=1||iface?.bulkIn==null||
+        ieee1284DeviceId==null||!ieee1284DeviceId!.contains('IVEC')){
+      throw StateError('Connect, verify Canon USB and printer IN/OUT/ID first');
+    }
+    if(_printing)throw StateError('NU print already in progress');
     if(raster.isEmpty||raster.length>20*1024*1024){
-      throw const FormatException('Test raster must be 1 byte to 20 MiB');
+      throw const FormatException('NU print data must be 1 byte to 20 MiB');
     }
     _printing=true;
-    var completed=0;
+    _printTrace.clear();
+    var matchedBytes=0;
+    var sentBytes=0;
+    var seq=40;
+    final inEndpoint=iface!.bulkIn!.address;
+    _logPrint('START data='+raster.length.toString()+
+      ' OUT=0x01 IN=0x'+inEndpoint.toRadixString(16)+
+      ' G2020-family IVEC encoder experimental; NO RETRIES');
     try {
-      // Captured Windows order: 02/08 preparation, then 02/02 bulk OUT,
-      // then 02/03 completion, while 02/09 preparation may arrive later.
-      // Waiting for 02/09 before writing caused an 8s deadlock.
-      _socket!.add(capturedBulkPreparationRequest());
-      await _socket!.flush();
-      var preparationSeen=false;
-      var seq=0x29;
-      while(completed<raster.length){
-        final count=(raster.length-completed).clamp(0,383);
-        final frame=capturedBulkOutFrame(
-          Uint8List.sublistView(raster,completed,completed+count),
-          sequence:seq);
-        final socket=_socket!;
-        socket.add(frame);
-        await socket.flush();
-        preparationSeen=await _awaitBulkOutCompletion(
-          sequence:seq,count:count,completedBefore:completed,
-          preparationObserved:preparationSeen);
-        completed+=count;
-        seq=(seq+1)&255;
+      var pending=NuPendingReplies();
+      await _sendTracked(NuWire.prepare(sequence:seq),
+        8,seq++,64,pending);
+      final initial=raster.length<383?raster.length:383;
+      final first=Uint8List.sublistView(raster,0,initial);
+      await _sendTracked(NuWire.bulkOut(first,sequence:seq),
+        2,seq++,initial,pending);
+      sentBytes=initial;
+      for(var i=0;i<3;i++) {
+        await _sendTracked(NuWire.bulkIn(sequence:seq,
+          endpoint:inEndpoint,requestedLength:1024),
+          4,seq++,1024,pending);
       }
-      return 'NU accepted $completed raster bytes in '
-        '${(completed+382)~/383} experimental bulk OUT completions. '
-        'Physical paper output NOT confirmed.';
+      matchedBytes+=await _drainTracked(pending);
+      // Bounded pipeline: no more than 2 OUTs and 2 INs in flight.
+      // This is deliberately conservative compared to the Windows client.
+      while(sentBytes<raster.length) {
+        pending=NuPendingReplies();
+        for(var i=0;i<2&&sentBytes<raster.length;i++) {
+          final remain=raster.length-sentBytes;
+          final count=remain<1024?remain:1024;
+          final bytes=Uint8List.sublistView(raster,sentBytes,
+            sentBytes+count);
+          await _sendTracked(NuWire.bulkOut(bytes,sequence:seq),
+            2,seq++,count,pending);
+          sentBytes+=count;
+          await _sendTracked(NuWire.bulkIn(sequence:seq,
+            endpoint:inEndpoint,requestedLength:1024),
+            4,seq++,1024,pending);
+        }
+        matchedBytes+=await _drainTracked(pending);
+      }
+      _logPrint('END matching NU bulk OUT replies for '+
+        matchedBytes.toString()+' bytes; PHYSICAL PRINT UNVERIFIED');
+      return 'NU replied to '+matchedBytes.toString()+
+        ' bulk OUT bytes; printer output NOT verified. '+
+        'Copy diagnostic trace before starting another attempt.';
     }catch(e){
-      // Do not resend uncertain data or leave a half-written session open.
+      _logPrint('FAILED after '+matchedBytes.toString()+
+        ' OUT bytes matched, '+sentBytes.toString()+
+        ' sent; '+e.toString()+'; NO RETRY');
+      // Do not resend uncertain bytes. Retain trace after disconnect.
       await disconnect();
       rethrow;
     }finally{
