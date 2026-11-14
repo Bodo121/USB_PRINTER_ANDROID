@@ -60,7 +60,7 @@ void main(){
   });
   test('rejects unsafe sizes',(){
     expect(()=>NuCanonConnection.capturedBulkOutFrame(
-      Uint8List(384),sequence:0x29),throwsFormatException);
+      Uint8List(1413),sequence:0x29),throwsFormatException);
     expect(()=>NuCanonConnection.capturedBulkOutFrame(
       Uint8List(0),sequence:0x29),throwsFormatException);
   });
