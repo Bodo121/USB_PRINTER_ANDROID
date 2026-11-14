@@ -19,6 +19,8 @@ class NuCanonConnection {
   String? _connectedHost;
   NuConfiguration? configuration;
   String? ieee1284DeviceId;
+  bool _printing=false;
+  bool get printing => _printing;
   NuInterface? get printerInterface => configuration?.printerInterface;
 
   bool get isConnected => _socket!=null && !_ended &&
@@ -178,6 +180,62 @@ class NuCanonConnection {
     } catch (_) {
       await disconnect();
       rethrow;
+    }
+  }
+
+  /// Experimental bulk-OUT sender. The 383-byte Windows request is the
+  /// only observed nonempty OUT shape; it is NOT proven to generalize to
+  /// arbitrary IVEC jobs. This is explicitly opt-in and never auto-retries.
+  /// We require the verified printer-class ID before transmitting anything.
+  Future<String> experimentalNuPrint(Uint8List raster) async {
+    if(!isConnected || _socket==null || printerInterface?.bulkOut?.address!=1 ||
+       ieee1284DeviceId==null || !ieee1284DeviceId!.contains('IVEC')){
+      throw StateError('Connect, verify configuration and read Canon ID first');
+    }
+    if(_printing)throw StateError('Print already in progress');
+    if(raster.isEmpty||raster.length>20*1024*1024){
+      throw const FormatException('Test raster must be 1 byte to 20 MiB');
+    }
+    _printing=true;
+    var completed=0;
+    try {
+      // One bounded transfer at a time. The NU 02/02 command and 02/03
+      // completion are observed in Windows traffic, but dynamic length
+      // and payload-offset semantics remain experimental.
+      var seq=0x29;
+      while(completed<raster.length){
+        final count=(raster.length-completed).clamp(0,383);
+        final frame=Uint8List(1460);
+        frame.setAll(0,NuHello.prefix);
+        frame.setAll(16,[85,78,84,36,count>>8,count&255,2,2,
+          seq,0,0,0,0,0,1,0,
+          1,0,0x30,0xf0,count&255,count>>8]);
+        // Captured 02/02 OUT framing contains 40-byte metadata after
+        // the 16-byte NU preamble. This payload offset is experimental.
+        frame.setRange(56,56+count,raster,completed);
+        final socket=_socket!;
+        socket.add(frame);
+        await socket.flush();
+        final response=await _readExact(32,const Duration(seconds:8));
+        if(response[0]!=85||response[1]!=78||response[2]!=84||
+           response[3]!=36||response[6]!=2||response[7]!=3||
+           response[8]!=seq||response[26]!=0x80||response[27]!=seq){
+          throw FormatException(
+            'NU bulk OUT completion mismatch after $completed bytes; '
+            'delivery uncertain, no retry');
+        }
+        completed+=count;
+        seq=(seq+1)&255;
+      }
+      return 'NU accepted $completed raster bytes in '
+        '${(completed+382)~/383} experimental bulk OUT completions. '
+        'Physical paper output NOT confirmed.';
+    }catch(e){
+      // Do not resend uncertain data or leave a half-written session open.
+      await disconnect();
+      rethrow;
+    }finally{
+      _printing=false;
     }
   }
 

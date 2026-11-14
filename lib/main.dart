@@ -8,7 +8,7 @@ import 'services/nu_session.dart';
 import 'services/nu_canon_connection.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
-import 'services/lpr_transport.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
@@ -55,6 +55,7 @@ class _HomeState extends State<Home> {
  final NuCanonConnection nuConnection=NuCanonConnection();
  bool nuConnectRunning=false;
  bool nuPrinterIdRunning=false;
+ bool nuExperimentalPrint=false;
  String nuPrinterIdMessage='';
  String nuConnectionMessage='Not connected to Canon USB device';
  NuHelloResult? nuGreetingResult;
@@ -409,17 +410,6 @@ class _HomeState extends State<Home> {
        : result.detail;
    });
  }
- Future<void> inspectQueue() async {
-   final host = ip.text.trim(), q = queue.text.trim();
-   if(host.isEmpty || q.isEmpty) {setState(()=>message='Enter or discover a hub and provide its LPR queue name');return;}
-   setState(()=>message='Inspecting LPR queue...');
-   try {
-     final response = await const LprTransport().queryQueue(host:host,queue:q);
-     if(mounted)setState(()=>message=response.trim().isEmpty
-       ? 'Empty LPR status response: this is NOT a print-job ACK. Queue may still be valid; use the explicit one-page test to check the LPR transfer.'
-       : 'LPD queue response: ${response.trim().length>400?response.trim().substring(0,400):response.trim()}');
-   } catch(e) { if(mounted)setState(()=>message='Queue check failed: $e'); }
- }
  Future<void> pick() async {
    try{
      final f=await FilePicker.pickFile(type:FileType.custom,
@@ -481,26 +471,34 @@ class _HomeState extends State<Home> {
    }
  }
  Future<void> testCanonNative() async {
-   if (pdfBytes==null || !canonConsent || canonBusy) return;
-   if (ip.text.trim().isEmpty || queue.text.trim().isEmpty) {
-     setState(()=>message='No confirmed LPR queue. Discover the hub or use Advanced Settings.');return;
+   if(pdfBytes==null || !canonConsent || canonBusy || !nuExperimentalPrint)return;
+   if(!nuConnection.isConnected || nuConnection.ieee1284DeviceId==null){
+     setState(()=>message='Connect NU and read Canon printer-class ID first.');
+     return;
    }
-   setState((){canonBusy=true;message='Converting first PDF page to Canon G2020-series IVEC raster on Android...';});
+   setState((){
+     canonBusy=true;
+     message='Rendering first PDF page into Canon IVEC raster...';
+   });
    try {
-     final result=await const MethodChannel('digitus_print/canon').invokeMethod<String>(
-       'experimentalPrint',<String,dynamic>{
-         'pdf':pdfBytes,'host':ip.text.trim(),'queue':queue.text.trim(),
-         'gray':canonGrayscale,'approved':canonConsent,
-         'dataFirst':canonDataFirst,
-         'reservedSourcePort':canonReservedPort,
+     final raster=await const MethodChannel('digitus_print/canon')
+       .invokeMethod<Uint8List>('prepareRaster',{
+         'pdf':pdfBytes,'gray':canonGrayscale,'approved':true,
        });
-     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · LPR transaction ACK, physical output unknown: $filename');
-     final prefs=await SharedPreferences.getInstance();
+     if(raster==null||raster.isEmpty)throw StateError('No raster generated');
+     if(!mounted)return;
+     setState(()=>message='Experimental NU bulk OUT: sending ${raster.length} bytes; no automatic retry...');
+     final result=await nuConnection.experimentalNuPrint(raster);
+     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · NU bulk test: ${raster.length} bytes; physical output unverified');
      history=history.take(20).toList();
+     final prefs=await SharedPreferences.getInstance();
      await prefs.setStringList('history',history);
-     if(mounted)setState(()=>message=result??'LPR returned without a result');
-   } catch(e) { if(mounted)setState(()=>message='Canon test failed: $e'); }
-   finally { if(mounted)setState(()=>canonBusy=false); }
+     if(mounted)setState(()=>message=result);
+   }catch(e){
+     if(mounted)setState(()=>message='NU print attempt failed (do not blindly retry): $e');
+   }finally{
+     if(mounted)setState(()=>canonBusy=false);
+   }
  }
  Future<void> printFile() async {
    if(pdfBytes==null)return;
@@ -594,7 +592,7 @@ class _HomeState extends State<Home> {
        if(ip.text.isNotEmpty)ListTile(
          leading:const Icon(Icons.link),
          title:const Text('Saved print server'),
-         subtitle:Text('${ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'),
+         subtitle:Text('${ip.text} · NU TCP 4660'),
        ),
        Card.outlined(child:Padding(padding:const EdgeInsets.all(12),
          child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -781,11 +779,7 @@ class _HomeState extends State<Home> {
            TextField(controller:ip,decoration:const InputDecoration(
              border:OutlineInputBorder(),labelText:'Hub IP address')),
            const SizedBox(height:12),
-           TextField(controller:queue,decoration:const InputDecoration(
-             border:OutlineInputBorder(),labelText:'LPR queue name',
-             helperText:'Required only when discovery cannot identify a queue')),
            OutlinedButton.icon(onPressed:save,icon:const Icon(Icons.save),label:const Text('Save connection')),
-           OutlinedButton.icon(onPressed:inspectQueue,icon:const Icon(Icons.fact_check_outlined),label:const Text('Inspect queue')),
          ],
        ),
        const SizedBox(height:12),
@@ -823,44 +817,41 @@ class _HomeState extends State<Home> {
        const SizedBox(height:8),
        const SizedBox(height:12),
        const Divider(),
-       Text('Native Canon test print',style:style.titleLarge),
-       const Text('NOTE: This button uses experimental LPR, NOT the working NU TCP 4660 USB connection. Native NU bulk printing is not enabled.'),
+       Text('Native NU Canon test print',style:style.titleLarge),
        const SizedBox(height:8),
-       const Text('Experimental: converts ONLY PAGE 1 to Canon G2020-series IVEC/PWG raster and sends it to your DIGITUS LPR queue. G2420 compatibility and hub forwarding are not yet verified; ink and paper may be consumed. No Windows or server required.'),
-       SwitchListTile(title:const Text('Grayscale'),subtitle:const Text('Canon normal-quality A4'),value:canonGrayscale,
-         onChanged:canonBusy?null:(value)=>setState(()=>canonGrayscale=value)),
+       const Text('Experimental direct USB-over-IP printing on TCP 4660. '
+         'No LPR or Windows. The captured NU bulk framing is not fully '
+         'validated and a failed attempt may leave output status uncertain. '
+         'Do not repeat a job without checking the printer.'),
        SwitchListTile(
-         title:const Text('Compatibility: send raster data first'),
-         subtitle:const Text('For older LPR servers that close after the control-file header. OFF uses RFC standard control-first. Does not automatically retry.'),
-         value:canonDataFirst,
-         onChanged:canonBusy?null:(value)async{
-           setState(()=>canonDataFirst=value);
-           final prefs=await SharedPreferences.getInstance();
-           await prefs.setBool('canonDataFirst',value);
-         }),
-       SwitchListTile(
-         title:const Text('Advanced: RFC1179 reserved source port'),
-         subtitle:const Text('Tries local TCP ports 721-731. Usually denied for Android apps. This does NOT use root, never falls back, and never retries the print job.'),
-         value:canonReservedPort,
-         onChanged:canonBusy?null:(value)async{
-           setState(()=>canonReservedPort=value);
-           final prefs=await SharedPreferences.getInstance();
-           await prefs.setBool('canonReservedPort',value);
-         }),
+         title:const Text('Enable experimental NU printing'),
+         subtitle:const Text('Opt-in only; requires an open verified NU session '
+           'and Canon printer-class ID (IVEC).'),
+         value:nuExperimentalPrint,
+         onChanged:canonBusy?null:(value)=>setState(()=>nuExperimentalPrint=value)),
+       SwitchListTile(title:const Text('Grayscale'),
+         subtitle:const Text('Canon G2020-family IVEC raster, A4 normal quality'),
+         value:canonGrayscale,
+         onChanged:canonBusy?null:(v)=>setState(()=>canonGrayscale=v)),
        CheckboxListTile(
-         title:const Text('I understand this is an unverified G2020-family test'),
-         value:canonConsent,onChanged:canonBusy?null:(value)=>setState(()=>canonConsent=value??false),
-       ),
+         title:const Text('I accept an unverified NU bulk-transfer print test'),
+         value:canonConsent,
+         onChanged:canonBusy?null:(v)=>setState(()=>canonConsent=v??false)),
        FilledButton.icon(
-         onPressed:pdfBytes!=null && canonConsent && !canonBusy?testCanonNative:null,
-         icon:const Icon(Icons.science_outlined),
-         label:Text(canonBusy?'Preparing and sending raster...':'Send 1-page Canon IVEC test'),
-       ),
-       const Text('If the hub closes after queue ACK, try Data First manually. This is a transport experiment and cannot verify Canon G2420 printer-language compatibility. Never repeatedly resend when the output status is uncertain.'),
+         onPressed:pdfBytes!=null && canonConsent && nuExperimentalPrint &&
+           nuConnection.isConnected &&
+           nuConnection.ieee1284DeviceId!=null && !canonBusy
+             ?testCanonNative:null,
+         icon:const Icon(Icons.print),
+         label:Text(canonBusy?'Sending experimental NU raster...':
+           'Test 1-page NU printing')),
+       const Text('Requires Connect and verify Canon USB, then Read Canon '
+         'printer-class ID on the Discover tab. USB completion does not '
+         'prove a page printed. Never automatically retry.'),
 
      ]else...[
        Text('Activity history',style:style.headlineMedium),
-       const Text('Logs include print-dialog launches and LPR acknowledgements, not verified physical output.'),
+       const Text('NU bulk completions and Android print-dialog launches do not confirm physical output.'),
        for(final item in history)ListTile(leading:const Icon(Icons.description_outlined),title:Text(item)),
        if(history.isEmpty)const ListTile(title:Text('No activity yet')),
      ],
