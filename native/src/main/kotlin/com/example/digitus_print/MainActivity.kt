@@ -119,6 +119,32 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Prefer the existing native-resolution high-refresh mode without forcing
+    // lower resolution, unrelated modes or a refresh unsupported by the panel.
+    private fun preferHighRefreshRate() {
+        if (android.os.Build.VERSION.SDK_INT < 23) return
+        try {
+            val display = window.decorView.display ?: return
+            val current = display.mode
+            val best = display.supportedModes
+                .filter { it.physicalWidth == current.physicalWidth &&
+                          it.physicalHeight == current.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            if (best.refreshRate > current.refreshRate + 0.5f) {
+                val params = window.attributes
+                params.preferredDisplayModeId = best.modeId
+                window.attributes = params
+            }
+        } catch (_: Exception) {
+            // Adaptive display scheduling still works when the hint is ignored.
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        preferHighRefreshRate()
+    }
+
     override fun onDestroy() {
         worker.shutdown()
         super.onDestroy()

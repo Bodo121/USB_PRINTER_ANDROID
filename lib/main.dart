@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'services/hub_discovery.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
 import 'package:file_picker/file_picker.dart';
@@ -30,11 +31,12 @@ class Home extends StatefulWidget {
 }
 class _HomeState extends State<Home> {
  final ip=TextEditingController(),queue=TextEditingController();
- int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false;
+ int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
  Uint8List? pdfBytes; String filename='';
  List<String> hosts=[],history=[];
+ final Map<String,List<LprCandidate>> queueMatches={};
  @override void initState(){super.initState();load();}
  Future<void> load() async {
    final prefs=await SharedPreferences.getInstance();
@@ -52,31 +54,57 @@ class _HomeState extends State<Home> {
    if(mounted)setState(()=>message='Connection saved');
  }
  Future<void> discover() async {
-   setState((){busy=true;hosts=[];progress=0;message='Scanning for LPR servers...';});
-   try{
-     final nics=await NetworkInterface.list(type:InternetAddressType.IPv4,includeLoopback:false);
-     final prefixes=<String>{};
-     for(final nic in nics){for(final addr in nic.addresses){
-       final s=addr.address.split('.');
-       if(s.length==4 && s[0]!='127' && s[0]!='169') prefixes.add('${s[0]}.${s[1]}.${s[2]}');
-     }}
+   if(busy)return;
+   setState((){busy=true;hosts=[];queueMatches.clear();progress=0;
+     message='Searching your local network for print servers...';});
+   try {
+     final prefixes=await HubDiscovery.localPrefixes();
+     if(prefixes.isEmpty){
+       setState(()=>message='No private LAN address found. Connect to your Wi-Fi.');
+       return;
+     }
      final targets=<String>[];
-     for(final prefix in prefixes.take(2)){for(int x=1;x<=254;x++){targets.add('$prefix.$x');}}
-     for(var i=0;i<targets.length;i+=24){
-       final found=await Future.wait(targets.skip(i).take(24).map((host)async{
-         try{final socket=await Socket.connect(host,515,timeout:const Duration(milliseconds:500));
-           socket.destroy();return host;
-         }catch(_){return null;}
+     for(final prefix in prefixes){
+       for(int x=1;x<=254;x++){targets.add('$prefix.$x');}
+     }
+     final found=<String>[];
+     for(var i=0;i<targets.length;i+=64){
+       final group=targets.skip(i).take(64);
+       final checks=await Future.wait(group.map((host)async{
+         return await HubDiscovery.hasLpr(host)?host:null;
        }));
+       found.addAll(checks.whereType<String>());
        if(!mounted)return;
        setState((){
-         hosts.addAll(found.whereType<String>());
-         progress=(i+24).clamp(0,targets.length)/ (targets.isEmpty?1:targets.length);
+         hosts=List.of(found);
+         progress=((i+64).clamp(0,targets.length))/targets.length;
        });
      }
-     if(mounted)setState(()=>message=hosts.isEmpty?'No LPR service found; check Wi-Fi and hub power':'Found ${hosts.length} possible LPR server(s)');
+     if(found.isEmpty){
+       if(mounted)setState(()=>message='No LPR hub found. Check the network and printer hub.');
+       return;
+     }
+     if(mounted)setState(()=>message='Found ${found.length} LPR endpoint(s). Checking queues safely...');
+     // Old print servers may reject queue-status requests; never fabricate a queue.
+     for(final host in found.take(6)){
+       final matches=await HubDiscovery.probeQueues(host);
+       if(!mounted)return;
+       setState(()=>queueMatches[host]=matches);
+     }
+     final confirmed=<LprCandidate>[];
+     for(final matches in queueMatches.values){confirmed.addAll(matches);}
+     if(confirmed.length==1 && found.length==1){
+       ip.text=confirmed.single.host;
+       queue.text=confirmed.single.queue;
+       await save();
+       if(mounted)setState(()=>message='Saved one possible LPR queue automatically. Print output and Canon model are not verified.');
+     }else if(mounted){
+       setState(()=>message=confirmed.isEmpty
+         ? 'Found ${found.length} LPR server(s), but none disclosed a known queue. Choose a hub; its queue may require one-time setup.'
+         : 'Found ${confirmed.length} possible queues. Select the correct entry to connect.');
+     }
    }catch(e){if(mounted)setState(()=>message='Discovery error: $e');}
-   finally{if(mounted)setState(()=>busy=false);}
+   finally {if(mounted)setState(()=>busy=false);}
  }
  Future<void> inspectQueue() async {
    final host = ip.text.trim(), q = queue.text.trim();
@@ -110,7 +138,7 @@ class _HomeState extends State<Home> {
        }
        pdfBytes=await doc.save();
      }
-     if(mounted)setState((){filename=f.name;tab=1;message='Prepared: $filename';});
+     if(mounted)setState((){filename=f.name;tab=1;showPreview=false;message='Prepared: $filename';});
    }catch(e){if(mounted)setState(()=>message='File error: $e');}
  }
  Future<void> testCanonNative() async {
@@ -158,20 +186,48 @@ class _HomeState extends State<Home> {
      if(tab==0)...[
        Text('Discover your print hub',style:style.headlineMedium),
        const SizedBox(height:8),
-       const Text('Scan your current Wi-Fi for devices accepting LPR on port 515. Results are candidates, not verified DIGITUS devices.'),
+       const Text('Discover LPR servers and attempt read-only queue detection. The hub and Canon model are not identifiable via standard LPR alone.'),
        const SizedBox(height:16),
-       FilledButton.icon(onPressed:busy?null:discover,icon:const Icon(Icons.wifi_find),label:Text(busy?'Scanning...':'Find print hubs')),
+       FilledButton.icon(onPressed:busy?null:discover,icon:const Icon(Icons.wifi_find),label:Text(busy?'Searching...':'Discover printers')),
        if(busy)LinearProgressIndicator(value:progress),
-       for(final host in hosts)Card(child:ListTile(leading:const Icon(Icons.router),title:Text(host),
-         subtitle:const Text('LPR port 515 accessible'),trailing:const Icon(Icons.chevron_right),
-         onTap:(){ip.text=host;save();})),
-       const SizedBox(height:16),
-       TextField(controller:ip,decoration:const InputDecoration(border:OutlineInputBorder(),labelText:'Hub IP (optional fallback)')),
-       const SizedBox(height:12),
-       TextField(controller:queue,decoration:const InputDecoration(border:OutlineInputBorder(),labelText:'LPR queue name',helperText:'Windows DIGITUS utility → Device Properties')),
-       const SizedBox(height:8),
-       OutlinedButton.icon(onPressed:save,icon:const Icon(Icons.save),label:const Text('Save hub')),
-       OutlinedButton.icon(onPressed:inspectQueue,icon:const Icon(Icons.fact_check_outlined),label:const Text('Inspect LPR queue')),
+       for(final host in hosts)Card(child:Column(children:[
+         ListTile(leading:const Icon(Icons.router),title:Text('Print server · $host'),
+           subtitle:Text(queueMatches[host]?.isNotEmpty==true
+             ? '${queueMatches[host]!.length} candidate queues found'
+             : 'LPR port 515 accessible; queue not confirmed'),
+           onTap:(){ip.text=host;save();}),
+         for(final match in queueMatches[host]??<LprCandidate>[])
+           ListTile(dense:true,leading:const Icon(Icons.print_outlined),
+             title:Text('Possible queue: ${match.queue}'),
+             subtitle:Text(match.evidence,maxLines:2,overflow:TextOverflow.ellipsis),
+             trailing:const Icon(Icons.add_circle_outline),
+             onTap:()async{
+               ip.text=match.host;queue.text=match.queue;
+               await save();
+               if(mounted)setState(()=>message='Saved candidate queue ${match.queue}. Canon G2420 and physical printing remain unverified.');
+             }),
+       ])),
+       if(ip.text.isNotEmpty)ListTile(
+         leading:const Icon(Icons.link),
+         title:const Text('Saved print server'),
+         subtitle:Text('${ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'),
+       ),
+       ExpansionTile(
+         title:const Text('Advanced connection settings'),
+         subtitle:const Text('Manual IP, LPR queue and diagnostics'),
+         initiallyExpanded:showAdvanced,
+         onExpansionChanged:(v)=>setState(()=>showAdvanced=v),
+         children:[
+           TextField(controller:ip,decoration:const InputDecoration(
+             border:OutlineInputBorder(),labelText:'Hub IP address')),
+           const SizedBox(height:12),
+           TextField(controller:queue,decoration:const InputDecoration(
+             border:OutlineInputBorder(),labelText:'LPR queue name',
+             helperText:'Required only when discovery cannot identify a queue')),
+           OutlinedButton.icon(onPressed:save,icon:const Icon(Icons.save),label:const Text('Save connection')),
+           OutlinedButton.icon(onPressed:inspectQueue,icon:const Icon(Icons.fact_check_outlined),label:const Text('Inspect queue')),
+         ],
+       ),
        const SizedBox(height:12),
        const Card(child:Padding(padding:EdgeInsets.all(14),child:Text(
          'Canon PIXMA G2420 requires Canon raster printer commands. A detected LPR hub alone cannot print raw PDFs or photos. Android printing requires a compatible print service or bridge.'
@@ -191,7 +247,11 @@ class _HomeState extends State<Home> {
            onChanged:(v)=>setState(()=>landscape=v)))
        ]),
        const Text('Page size and orientation apply when preparing newly selected images and text. For existing PDFs, the original layout is preserved.'),
-       if(pdfBytes!=null)SizedBox(height:320,child:PdfPreview(
+       if(pdfBytes!=null)OutlinedButton.icon(
+         onPressed:()=>setState(()=>showPreview=!showPreview),
+         icon:Icon(showPreview?Icons.visibility_off:Icons.preview),
+         label:Text(showPreview?'Hide preview':'Show document preview')),
+       if(pdfBytes!=null && showPreview)SizedBox(height:320,child:PdfPreview(
          build:(_)=>pdfBytes!,allowPrinting:false,allowSharing:false,
          canChangePageFormat:false,canChangeOrientation:false)),
        const SizedBox(height:12),
