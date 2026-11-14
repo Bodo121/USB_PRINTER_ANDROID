@@ -227,7 +227,7 @@ class _HomeState extends State<Home> {
          pw.Row(children:[
            pw.Container(width:72,height:32,color:PdfColors.black),
            pw.Container(width:72,height:32,color:PdfColors.cyan),
-           pw.Container(width:72,height:32,color:const PdfColor(1, 0, 1)),
+           pw.Container(width:72,height:32,color:PdfColor(1, 0, 1)),
            pw.Container(width:72,height:32,color:PdfColors.yellow),
          ]),
          pw.SizedBox(height:20),
