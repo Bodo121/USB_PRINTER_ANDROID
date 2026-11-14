@@ -9,7 +9,7 @@ import 'usb_port_diagnostics.dart';
 /// Experimental DA-70251 transport: captured NU greeting followed by a
 /// *read-only* USB GET_DESCRIPTOR control request. Successful enumeration
 /// demonstrates the vendor USB path, not exclusive ownership of the device.
-/// No print payload is ever sent by this class.
+/// Raw USB print bytes can be sent only through an explicit opt-in test.
 class NuCanonConnection {
   Socket? _socket;
   StreamSubscription<Uint8List>? _subscription;
@@ -183,6 +183,32 @@ class NuCanonConnection {
     }
   }
 
+  /// Builds a raw USB bulk OUT record matching the *actual* first
+  /// Windows 02/02 request at sequence 0x29 in plm222.pcapng.
+  /// Header is 48 bytes, including the 16-byte descending NU preamble.
+  /// The raw USB payload starts at byte 48, not byte 56.
+  static Uint8List capturedBulkOutFrame(Uint8List bytes,{
+    required int sequence,
+  }) {
+    if(bytes.isEmpty||bytes.length>383||sequence<0||sequence>255){
+      throw const FormatException('NU bulk test chunk must be 1..383 bytes');
+    }
+    final count=bytes.length;
+    final frame=Uint8List(1460);
+    frame.setAll(0,NuHello.prefix);
+    frame.setAll(16,<int>[
+      0x55,0x4e,0x54,0x24,
+      count>>8,count&0xff,0x02,0x02,
+      sequence,0x00,0x00,0x00,0x00,0x00,0x01,0x00,
+      0x01,0x00,0x30,0xf0,
+      count&0xff,count>>8,0x00,0x00,
+      0x00,0x00,0x80,sequence,
+      0x00,0x12,0x72,0x20,
+    ]);
+    frame.setRange(48,48+count,bytes);
+    return frame;
+  }
+
   /// Experimental bulk-OUT sender. The 383-byte Windows request is the
   /// only observed nonempty OUT shape; it is NOT proven to generalize to
   /// arbitrary IVEC jobs. This is explicitly opt-in and never auto-retries.
@@ -205,21 +231,17 @@ class NuCanonConnection {
       var seq=0x29;
       while(completed<raster.length){
         final count=(raster.length-completed).clamp(0,383);
-        final frame=Uint8List(1460);
-        frame.setAll(0,NuHello.prefix);
-        frame.setAll(16,[85,78,84,36,count>>8,count&255,2,2,
-          seq,0,0,0,0,0,1,0,
-          1,0,0x30,0xf0,count&255,count>>8]);
-        // Captured 02/02 OUT framing contains 40-byte metadata after
-        // the 16-byte NU preamble. This payload offset is experimental.
-        frame.setRange(56,56+count,raster,completed);
+        final frame=capturedBulkOutFrame(
+          Uint8List.sublistView(raster,completed,completed+count),
+          sequence:seq);
         final socket=_socket!;
         socket.add(frame);
         await socket.flush();
         final response=await _readExact(32,const Duration(seconds:8));
         if(response[0]!=85||response[1]!=78||response[2]!=84||
            response[3]!=36||response[6]!=2||response[7]!=3||
-           response[8]!=seq||response[26]!=0x80||response[27]!=seq){
+           response[8]!=seq||response[26]!=0x80||response[27]!=seq||
+           response[20]!=(count&255)||response[21]!=(count>>8)) {
           throw FormatException(
             'NU bulk OUT completion mismatch after $completed bytes; '
             'delivery uncertain, no retry');

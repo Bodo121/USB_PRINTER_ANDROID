@@ -1,5 +1,4 @@
 import 'dart:typed_data';
-import 'services/hub_discovery.dart';
 import 'services/hub_web_probe.dart';
 import 'services/usbip_discovery.dart';
 import 'services/vendor_usb_discovery.dart';
@@ -36,15 +35,15 @@ class Home extends StatefulWidget {
  @override State<Home> createState()=>_HomeState();
 }
 class _HomeState extends State<Home> {
- final ip=TextEditingController(),queue=TextEditingController(),
-   servicePorts=TextEditingController(text:'4660,3240,515,9100');
+ final ip=TextEditingController(),
+   servicePorts=TextEditingController(text:'4660');
  int selectedUsbSocket=1;
  bool probingServices=false;
  bool checkingUpdate=false,downloadingUpdate=false,updateDownloaded=false;
  String updateMessage='';
  Map<String,dynamic>? availableUpdate;
  List<NetworkServicePort> networkServices=[];
- int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,canonDataFirst=false,canonReservedPort=false,showAdvanced=false,showPreview=false;
+ int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
  HubSnapshot? hubInfo;
@@ -61,22 +60,17 @@ class _HomeState extends State<Home> {
  NuHelloResult? nuGreetingResult;
  bool nuGreetingRunning=false;
  bool vendorProbeRunning=false;
- int scanGeneration=0;
  Uint8List? pdfBytes; String filename='';
- List<String> hosts=[],history=[];
- final Map<String,List<LprCandidate>> queueMatches={};
+ List<String> history=[];
  @override void initState(){super.initState();load();}
  Future<void> load() async {
    final prefs=await SharedPreferences.getInstance();
    if(!mounted)return;
    setState((){
      ip.text=prefs.getString('ip')??'192.168.0.74';
-     queue.text=prefs.getString('queue')??'a9043a1802';
-     servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660,3240,515,9100';
+     servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660';
      selectedUsbSocket=(prefs.getInt('usbSocket')??1).clamp(1,4);
      history=prefs.getStringList('history')??[];
-     canonDataFirst=prefs.getBool('canonDataFirst')??false;
-     canonReservedPort=prefs.getBool('canonReservedPort')??false;
    });
    if(ip.text.trim().isNotEmpty) { await checkSavedHub(); }
    checkForUpdates(silent:true);
@@ -144,10 +138,9 @@ class _HomeState extends State<Home> {
  Future<void> save() async {
    final prefs=await SharedPreferences.getInstance();
    await prefs.setString('ip',ip.text.trim());
-   await prefs.setString('queue',queue.text.trim());
    await prefs.setString('usbIpTcpPorts',servicePorts.text.trim());
    await prefs.setInt('usbSocket',selectedUsbSocket);
-   if(mounted)setState(()=>message='Connection saved');
+   if(mounted)setState(()=>message='NU hub address saved');
  }
  Future<void> checkSavedHub() async {
    final host=ip.text.trim();
@@ -156,118 +149,36 @@ class _HomeState extends State<Home> {
    if(!mounted || ip.text.trim()!=host)return;
    setState((){
      hubInfo=details;
-     if(details!=null)message='USB sharing hub found at $host. LPR queue and printed output are not yet verified.';
+     if(details!=null)message='USB sharing hub found at $host. Native NU printing requires a verified print test.';
    });
  }
  void cancelDiscovery() {
-   scanGeneration++;
    setState((){busy=false;message='Discovery cancelled';});
  }
  Future<void> discover() async {
    if(busy)return;
-   final generation=++scanGeneration;
+   final host=ip.text.trim();
    setState((){
-     busy=true;hosts=[];queueMatches.clear();progress=0;
-     message='Checking your USB hub...';
+     busy=true;
+     progress=0;
+     message='Discovering DIGITUS NU hub over UDP DCP...';
    });
-   bool active()=>mounted && scanGeneration==generation;
    try {
-     // Fast path: recognize the user's known hub before scanning /24 ranges.
-     final previous=ip.text.trim();
-     final saved=await const HubWebProbe().inspect(previous);
-     if(!active())return;
-     if(saved!=null){
-       setState((){
-         hubInfo=saved;hosts=[previous];progress=0.6;
-         message='USB hub found. Checking read-only LPR queue status...';
-       });
-       if(await HubDiscovery.hasLpr(previous)) {
-         final matches=await HubDiscovery.probeQueues(previous);
-         if(!active())return;
-         setState(()=>queueMatches[previous]=matches);
-         await autoSelectSingle(previous,matches);
-         if(!active())return;
-         setState((){
-           progress=1;
-           message=matches.length==1
-             ? 'Hub recognized; one candidate queue saved. Printing remains unverified.'
-             : matches.isEmpty
-               ? 'Hub identified, but the firmware did not reveal a queue. Use Advanced Settings if needed.'
-               : 'Hub recognized; choose one of the candidate queues shown below.';
-         });
-       } else {
-         if(!active())return;
-         setState(()=>message='Hub web interface works, but LPR port 515 is unavailable.');
-       }
-       return;
-     }
-
-     final prefixes=await HubDiscovery.localPrefixes();
-     if(!active())return;
-     if(prefixes.isEmpty){
-       setState(()=>message='No private Wi-Fi network found.');
-       return;
-     }
-     setState(()=>message='Searching local network for USB sharing hubs...');
-     final targets=<String>[];
-     for(final prefix in prefixes) {
-       for(int x=1;x<=254;x++){targets.add('$prefix.$x');}
-     }
-     final discovered=<String>[];
-     for(var i=0;i<targets.length;i+=64){
-       final batch=targets.skip(i).take(64);
-       final candidates=await Future.wait(batch.map((host)async{
-         final lpr=await HubDiscovery.hasLpr(host);
-         if(!lpr)return null;
-         return host;
-       }));
-       if(!active())return;
-       discovered.addAll(candidates.whereType<String>());
-       setState((){
-         hosts=List.of(discovered);
-         progress=0.7*((i+64).clamp(0,targets.length))/targets.length;
-       });
-     }
-     for(var i=0;i<discovered.length&&i<6;i++){
-       final host=discovered[i];
-       final details=await const HubWebProbe().inspect(host);
-       if(!active())return;
-       if(details!=null){
-         setState(()=>hubInfo=details);
-         // Prefer the identified hub; never identify a printer by its
-         // self-reported USB name as the G2420 profile remains user selected.
-         ip.text=host;
-       }
-       final matches=await HubDiscovery.probeQueues(host);
-       if(!active())return;
-       setState(()=>queueMatches[host]=matches);
-       await autoSelectSingle(host,matches);
-       if(!active())return;
-       setState(()=>progress=0.7+0.3*(i+1)/discovered.take(6).length);
-     }
-     if(!active())return;
+     final result=await const DcpDiscovery().discover(expectedHub:host);
+     if(!mounted||host!=ip.text.trim())return;
      setState((){
-       message=discovered.isEmpty
-         ? 'No LPR servers found. Check hub power and Wi-Fi.'
-         : hubInfo!=null
-           ? 'USB hub identified. Select a verified candidate queue if available.'
-           : 'Found LPR endpoints, but none verified as the DIGITUS hub.';
+       dcpDiagnostic=result;
        progress=1;
+       message=result.info==null
+         ?result.detail
+         :'DIGITUS NU hub: ${result.info!.name}; Canon: '
+           '${result.info!.reportedDevice??'not reported'}';
      });
-   }catch(e){
-     if(active())setState(()=>message='Discovery error: $e');
-   }finally {
-     if(active())setState(()=>busy=false);
+   } catch(e) {
+     if(mounted)setState(()=>message='NU discovery failed: $e');
+   } finally {
+     if(mounted)setState(()=>busy=false);
    }
- }
- Future<void> autoSelectSingle(String host,List<LprCandidate> matches) async {
-   // A queue-status reply may be identical for ANY queue on old firmware.
-   // Auto-select only when exactly one candidate has convincing evidence.
-   if(matches.length!=1)return;
-   ip.text=host;queue.text=matches.single.queue;
-   final prefs=await SharedPreferences.getInstance();
-   await prefs.setString('ip',host);
-   await prefs.setString('queue',queue.text);
  }
  Future<void> checkUsbNetworkPorts() async {
    if(probingServices)return;
@@ -458,7 +369,7 @@ class _HomeState extends State<Home> {
          pw.Text('abcdefghijklmnopqrstuvwxyz'),
          pw.SizedBox(height:24),
          pw.Text('If this page prints successfully, confirm the result in the app.'),
-         pw.Text('A server LPR acknowledgement alone does not prove printing.'),
+         pw.Text('A NU bulk transfer acknowledgement alone does not prove printing.'),
        ],
      )));
      final bytes=await doc.save();
@@ -512,7 +423,7 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>message='Sent to Android print dialog (not confirmed printed)');
    }catch(e){if(mounted)setState(()=>message='Print error: $e');}
  }
- @override void dispose(){nuConnection.disconnect();scanGeneration++;ip.dispose();queue.dispose();servicePorts.dispose();super.dispose();}
+ @override void dispose(){nuConnection.disconnect();ip.dispose();servicePorts.dispose();super.dispose();}
  @override Widget build(BuildContext context){
    final style=Theme.of(context).textTheme;
    return Scaffold(appBar:AppBar(title:const Text('Digitus Print'),actions:[
@@ -562,44 +473,27 @@ class _HomeState extends State<Home> {
          Text(hubInfo?.connectivityLabel??'Hub not identified yet'),
          Text('DIGITUS · ${ip.text.isEmpty?'Not configured':ip.text}',style:style.bodySmall),
          const SizedBox(height:4),
-         Text('Print path: unverified · Queue: ${queue.text.isEmpty?'Not found':queue.text}',style:style.bodySmall),
+         Text('Print path: experimental native NU · TCP 4660',style:style.bodySmall),
          if(hubInfo!=null)Text('Hub firmware: ${hubInfo!.firmware??'Unknown'} · USB: ${hubInfo!.deviceStatus??'Unknown'}',style:style.bodySmall),
        ]))),
        const SizedBox(height:8),
-       const Text('Discover LPR servers and attempt read-only queue detection. The hub and Canon model are not identifiable via standard LPR alone.'),
+       const Text('Discover the DIGITUS NU hub directly using its DCP protocol.'),
        const SizedBox(height:16),
        FilledButton.icon(onPressed:busy?null:discover,icon:const Icon(Icons.wifi_find),label:Text(busy?'Searching...':'Find my printer')),
        if(busy)TextButton.icon(onPressed:cancelDiscovery,icon:const Icon(Icons.close),label:const Text('Cancel search')),
        OutlinedButton.icon(onPressed:busy?null:checkSavedHub,icon:const Icon(Icons.refresh),label:const Text('Refresh hub status')),
        if(busy)LinearProgressIndicator(value:progress),
-       for(final host in hosts)Card(child:Column(children:[
-         ListTile(leading:const Icon(Icons.router),title:Text('Print server · $host'),
-           subtitle:Text(queueMatches[host]?.isNotEmpty==true
-             ? '${queueMatches[host]!.length} candidate queues found'
-             : 'LPR port 515 accessible; queue not confirmed'),
-           onTap:(){ip.text=host;save();}),
-         for(final match in queueMatches[host]??<LprCandidate>[])
-           ListTile(dense:true,leading:const Icon(Icons.print_outlined),
-             title:Text('Possible queue: ${match.queue}'),
-             subtitle:Text(match.evidence,maxLines:2,overflow:TextOverflow.ellipsis),
-             trailing:const Icon(Icons.add_circle_outline),
-             onTap:()async{
-               ip.text=match.host;queue.text=match.queue;
-               await save();
-               if(mounted)setState(()=>message='Saved candidate queue ${match.queue}. Canon G2420 and physical printing remain unverified.');
-             }),
-       ])),
        if(ip.text.isNotEmpty)ListTile(
-         leading:const Icon(Icons.link),
-         title:const Text('Saved print server'),
-         subtitle:Text('${ip.text} · NU TCP 4660'),
+         leading:const Icon(Icons.usb),
+         title:const Text('Native NU print server'),
+         subtitle:Text('${ip.text} · TCP 4660'),
        ),
        Card.outlined(child:Padding(padding:const EdgeInsets.all(12),
          child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
            const Text('USB hub connection diagnostics',
              style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
            const SizedBox(height:8),
-           const Text('The DIGITUS hub has four physical USB sockets. TCP service ports (4660 / 3240 / 515) are network endpoints, not physical USB socket numbers.'),
+           const Text('DIGITUS has four physical USB sockets. TCP 4660 is the native NU protocol, not a physical USB socket.'),
            const SizedBox(height:8),
            const Text('Physical USB socket (informational until vendor protocol is decoded)'),
            DropdownButton<int>(
@@ -631,7 +525,7 @@ class _HomeState extends State<Home> {
                  color:port.open?Colors.green:null),
                title:Text('TCP ${port.port}: ${port.open?'Open':'No connection'}'),
                subtitle:Text(port.description)),
-           const Text('Open TCP 4660 may match the NU V1.25 traffic captured on Windows. It is not a functional USB-over-IP connection until the vendor handshake is decoded.',
+           const Text('TCP 4660 is the native NU transport. The hub, Canon descriptors and printer ID have been verified live.',
              style:TextStyle(fontSize:12)),
          ]))),
        const SizedBox(height:12),
@@ -747,9 +641,9 @@ class _HomeState extends State<Home> {
                style:TextStyle(fontSize:12)),
            ],
            if(nuConnection.isConnected)
-             const Text('USB descriptor verified. Native NU print-data '
-               'transfers are not implemented; the Print tab retains the '
-               'existing experimental LPR/Android print paths.',
+             const Text('USB descriptor verified. Experimental NU bulk OUT '
+               'printing is available from the Print tab after reading '
+               'the Canon printer-class ID.',
                style:TextStyle(fontSize:12)),
          ]))),
        ExpansionTile(
@@ -771,8 +665,8 @@ class _HomeState extends State<Home> {
          ],
        ),
        ExpansionTile(
-         title:const Text('Advanced connection settings'),
-         subtitle:const Text('Manual IP, LPR queue and diagnostics'),
+         title:const Text('Advanced NU connection settings'),
+         subtitle:const Text('Hub IP address and diagnostics'),
          initiallyExpanded:showAdvanced,
          onExpansionChanged:(v)=>setState(()=>showAdvanced=v),
          children:[
@@ -789,7 +683,7 @@ class _HomeState extends State<Home> {
      ]else if(tab==1)...[
        Text('Print a document',style:style.headlineMedium),
        Card.filled(child:ListTile(leading:const Icon(Icons.print),title:const Text('Canon PIXMA G2420'),
-          subtitle:Text('DIGITUS · ${ip.text.isEmpty?'Not connected':ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'))),
+          subtitle:Text('DIGITUS · ${ip.text.isEmpty?'Not connected':ip.text} · NU TCP 4660'))),
        const Text('PDF, PNG, JPEG, TXT'),
        const SizedBox(height:16),
        FilledButton.icon(onPressed:pick,icon:const Icon(Icons.folder_open),label:const Text('Choose file')),
