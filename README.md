@@ -4,6 +4,22 @@ Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-702
 
 
 
+## Current status: NU v0.9.5 offline compatibility audit
+
+The 2026-11-14 Windows capture revealed a critical semantic mismatch:
+the first 383-byte print-session write is an opaque high-entropy USB
+transaction, **not** the first 383 bytes of a Canon IVEC document.
+The Android v0.9.4 handshake had matching NU replies but received 0
+printer-data bytes where Windows received 487 bytes at sequence 44.
+
+**Native printing is not yet supported.** The former live experimental
+print button now performs an **offline, read-only IVEC/NU compatibility
+audit** (0 NU/USB bytes transmitted). It does not require a hub
+connection or try to print. It retains a copyable diagnostic report.
+Older v0.9.3/v0.9.4 behavior below is historical, not current.
+
+See [capture-based root-cause investigation](docs/NU_G2010_SETUP_MISMATCH.md).
+
 ## Capture-verified NU handshake probe — v0.9.4 (2026-11-14)
 
 The v0.9.3 print test stalled after its first 383-byte OUT:
