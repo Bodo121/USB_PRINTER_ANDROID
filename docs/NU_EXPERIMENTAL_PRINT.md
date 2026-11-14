@@ -51,3 +51,14 @@ using the Windows header `00 12 82 24`. If all reads are empty, stop
 and record the entire TX/RX header trace. If any read contains data,
 report a successful *probe*, but do not send seq45 or a complete print
 job. Printer output and IVEC model compatibility remain unverified.
+
+## v0.9.5: disable unsafe synthetic USB setup writes
+
+The original Windows trace has an opaque 383-byte payload at seq41,
+while the Android sender substituted the first 383 bytes of the
+Kotlin-generated G2020 IVEC print stream. These payloads have different
+structures. The empty seq44 response in v0.9.4 is consistent with an
+uncompleted printer setup, but does not prove exactly what the device
+rejected. The native test is now an **offline compatibility audit**:
+zero NU/USB print traffic, zero automatic retries and no claim of
+printed output. See [detailed capture comparison](NU_G2010_SETUP_MISMATCH.md).
