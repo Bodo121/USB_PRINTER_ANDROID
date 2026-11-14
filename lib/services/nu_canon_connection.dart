@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'nu_session.dart';
 import 'nu_protocol.dart';
+import 'nu_print_audit.dart';
 import 'nu_configuration.dart';
 import 'usb_port_diagnostics.dart';
 
@@ -298,76 +299,34 @@ class NuCanonConnection {
     return completedOut;
   }
 
-  /// First-stage, explicitly approved NU handshake diagnostic.
-  /// The real Windows 2026-11-14 capture uses seq40 prep, seq41
-  /// 383-byte OUT on logical pipe 01 and seq42-44 1024-byte IN
-  /// on logical pipe 81. It then has 16-byte and 4-byte exchanges
-  /// whose payload semantics we have not decoded. Do NOT invent them
-  /// or stream the remainder of a raster on the wrong endpoint.
-  ///
-  /// No complete print job is attempted. The first OUT is still an
-  /// unverified experimental write, so never auto-retry uncertain data.
-  Future<String> experimentalNuPrint(Uint8List raster) async {
-    if(!isConnected||_socket==null||
-        printerInterface?.bulkOut?.address!=1||
-        ieee1284DeviceId==null||!ieee1284DeviceId!.contains('IVEC')){
-      throw StateError('Connect, verify Canon USB and printer ID first');
-    }
-    if(_printing)throw StateError('NU diagnostic already in progress');
-    if(raster.length<383||raster.length>20*1024*1024){
-      throw const FormatException('Expected Canon IVEC bytes (383..20 MiB)');
+  /// Offline analysis only. The captured Windows 383-byte USB transaction
+  /// cannot be recreated by taking the first 383 bytes of the IVEC raster.
+  /// An earlier experiment did that and received empty printer responses.
+  /// Do not send unverified command bytes or automatically retry printing.
+  Future<String> analyzeNuPrintPlan(Uint8List raster) async {
+    if(_printing)throw StateError('NU analysis already running');
+    if(raster.isEmpty || raster.length>20*1024*1024){
+      throw const FormatException('Expected 1..20 MiB of generated IVEC data');
     }
     _printing=true;
     _printTrace.clear();
-    var acknowledged=0;
-    _logPrint('START limited NU handshake diagnostic; rendered data='+
-      raster.length.toString()+
-      ' bytes, writing only first 383. Capture source: plm222.pcapng; '
-      'logical IN pipe=0x81, no automatic retry. NOT FULL PRINT.');
-    final pending=NuPendingReplies();
-    final inLengths=<int,int>{};
     try {
-      await _sendTracked(NuWire.prepare(sequence:40),
-        8,40,64,pending);
-      await _sendTracked(NuWire.bulkOut(
-        Uint8List.sublistView(raster,0,383),sequence:41),
-        2,41,383,pending);
-      for(var seq=42;seq<=44;seq++) {
-        await _sendTracked(NuWire.bulkIn(sequence:seq,
-          endpoint:0x81,requestedLength:1024),
-          4,seq,1024,pending);
-      }
-      acknowledged+=await _drainTracked(pending,onReply:(r){
-        if(r.command==5)inLengths[r.sequence]=r.bodyLength;
-      });
-      // In the successful Windows capture seq42 and seq43 are empty,
-      // but seq44 has 487 bytes. There is no proof this will always
-      // hold on other printer states or firmware versions.
-      _logPrint('PHASE1 seq42='+ (inLengths[42]??-1).toString()+
-        ' seq43='+(inLengths[43]??-1).toString()+
-        ' seq44='+(inLengths[44]??-1).toString()+
-        ' (Windows reference 0/0/487).');
-      if(!inLengths.values.any((length)=>length>0)){
-        throw StateError('No printer data from seq42..44 on logical NU '
-          'pipe 0x81. Aborting before seq45: inspect RX status in log. '
-          'Print delivery uncertain, no retry.');
-      }
-      _logPrint('STOP after known seq40..44 handshake; Windows next '
-        'writes 16 bytes at seq45 followed by 512-byte INs and '
-        'multiple undecoded device-specific exchanges. Those cannot '
-        'be constructed from the IVEC raster alone.');
-      return 'NU handshake probe returned printer data; '
-        'no complete print job was sent. Export the trace. '
-        'The full Canon print protocol is not yet implemented.';
-    }catch(e){
-      _logPrint('FAILED after '+acknowledged.toString()+
-        ' matching OUT bytes. '+e.toString()+'; NO RETRY');
-      rethrow;
+      final audit=NuPrintAudit.diagnose(raster);
+      for(final line in audit.split('\n'))_logPrint(line);
+      _logPrint('LIVE NU PRINT BLOCKED: cannot construct device setup '
+        'from the captured session. No bytes sent to the hub.');
+      return 'NU protocol mismatch confirmed offline. Zero USB bytes '
+        'transmitted. Tap Copy full NU TX/RX debug log to see why '
+        'native printing is not yet supported.';
     }finally{
-      await disconnect();
       _printing=false;
     }
   }
+
+  /// Retained as a fail-closed API so stale code cannot silently restore
+  /// dangerous experimental print writes. Use analyzeNuPrintPlan instead.
+  Future<String> experimentalNuPrint(Uint8List raster) async =>
+      analyzeNuPrintPlan(raster);
 
   static bool verifiesCanon(Uint8List reply) {
     if(reply.length!=58)return false;
