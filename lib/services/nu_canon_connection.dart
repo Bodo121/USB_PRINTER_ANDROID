@@ -209,6 +209,29 @@ class NuCanonConnection {
     return frame;
   }
 
+  /// Windows sent this 02/08 request to printer endpoint 01 directly
+  /// before the first 383-byte 02/02 bulk OUT transfer. This is an
+  /// experimental setup step; the meaning of its 64-byte response remains
+  /// unknown. Never send automatically outside an explicit print test.
+  static Uint8List capturedBulkPreparationRequest() {
+    final frame=Uint8List(1460);
+    frame.setAll(0,NuHello.prefix);
+    frame.setAll(16,const <int>[
+      0x55,0x4e,0x54,0x24,0x00,0x40,0x02,0x08,
+      0x28,0x00,0x00,0x00,0x00,0x00,0x01,0x00,
+      0x01,0x00,0x0b,0x00,0x40,0x00,0x00,0x00,
+      0x04,0xf8,0x80,0x28,0x40,0x10,0x92,0x34
+    ]);
+    return frame;
+  }
+
+  static bool isBulkPreparationResponse(Uint8List reply) =>
+      reply.length==64 &&
+      reply[0]==0x55 && reply[1]==0x4e &&
+      reply[2]==0x54 && reply[3]==0x24 &&
+      reply[4]==0 && reply[5]==0x20 &&
+      reply[6]==2 && reply[7]==9 && reply[8]==0x28;
+
   /// Experimental bulk-OUT sender. The 383-byte Windows request is the
   /// only observed nonempty OUT shape; it is NOT proven to generalize to
   /// arbitrary IVEC jobs. This is explicitly opt-in and never auto-retries.
@@ -228,6 +251,16 @@ class NuCanonConnection {
       // One bounded transfer at a time. The NU 02/02 command and 02/03
       // completion are observed in Windows traffic, but dynamic length
       // and payload-offset semantics remain experimental.
+      // Mirror Windows' initial printer-endpoint setup. If the hub does not
+      // answer, stop before sending any Canon print bytes.
+      _socket!.add(capturedBulkPreparationRequest());
+      await _socket!.flush();
+      final preparation=await _readExact(64,const Duration(seconds:8));
+      if(!isBulkPreparationResponse(preparation)){
+        throw const FormatException(
+          'NU printer bulk preparation was not acknowledged; '
+          'no raw raster bytes sent');
+      }
       var seq=0x29;
       while(completed<raster.length){
         final count=(raster.length-completed).clamp(0,383);

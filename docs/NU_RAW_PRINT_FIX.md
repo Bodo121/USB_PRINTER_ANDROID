@@ -40,3 +40,12 @@ encoder remains experimental for the USB G2010-series descriptor.
 A successful physical page is still required before we claim
 reliable printing. **Do not retry after a timeout without checking
 printer state.**
+
+## Captured pre-transfer setup
+
+The first Windows raw 02/02 endpoint-01 write (sequence 0x29) was
+preceded immediately by a 02/08 request (sequence 0x28) to endpoint 01.
+The hub answered with a 64-byte 02/09 record. The experimental Android
+print test now sends this same 02/08 setup and requires the 02/09 reply
+**before** transmitting any IVEC raster bytes. The underlying command
+semantics remain unverified; this could still fail on a different session.

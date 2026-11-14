@@ -2,6 +2,18 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:digitus_print/services/nu_canon_connection.dart';
 void main(){
+  test('NU 02/08 setup is 1460 bytes; validates 02/09 reply',(){
+    final request=NuCanonConnection.capturedBulkPreparationRequest();
+    expect(request.length,1460);
+    expect(request.sublist(16,48),[85,78,84,36,0,64,2,8,
+      0x28,0,0,0,0,0,1,0,1,0,0x0b,0,64,0,0,0,
+      4,0xf8,0x80,0x28,0x40,0x10,0x92,0x34]);
+    final reply=Uint8List(64);
+    reply.setAll(0,[85,78,84,36,0,32,2,9,0x28]);
+    expect(NuCanonConnection.isBulkPreparationResponse(reply),isTrue);
+    reply[7]=3;
+    expect(NuCanonConnection.isBulkPreparationResponse(reply),isFalse);
+  });
   test('383-byte NU bulk OUT header equals captured Windows 02/02 packet',(){
     final raw=Uint8List.fromList(List.generate(383,(i)=>i&255));
     final frame=NuCanonConnection.capturedBulkOutFrame(raw,sequence:0x29);
