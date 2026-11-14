@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'services/hub_discovery.dart';
 import 'services/hub_web_probe.dart';
+import 'services/usbip_discovery.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
 import 'package:file_picker/file_picker.dart';
@@ -35,6 +36,7 @@ class _HomeState extends State<Home> {
  double progress=0;
  String message='Ready to scan',paper='A4';
  HubSnapshot? hubInfo;
+ UsbIpResult? usbIpDiagnostic;
  int scanGeneration=0;
  Uint8List? pdfBytes; String filename='';
  List<String> hosts=[],history=[];
@@ -175,6 +177,19 @@ class _HomeState extends State<Home> {
    final prefs=await SharedPreferences.getInstance();
    await prefs.setString('ip',host);
    await prefs.setString('queue',queue.text);
+ }
+ Future<void> inspectNativeUsbIp() async {
+   final host=ip.text.trim();
+   if(host.isEmpty){setState(()=>message='Find the USB hub first');return;}
+   setState(()=>message='Querying standard USB/IP device list (read-only)...');
+   final result=await const UsbIpDiscovery().probe(host);
+   if(!mounted || ip.text.trim()!=host)return;
+   setState((){
+     usbIpDiagnostic=result;
+     message=result.supported
+       ? 'Standard USB/IP responded: ${result.devices.length} exported device(s)'
+       : result.detail;
+   });
  }
  Future<void> inspectQueue() async {
    final host = ip.text.trim(), q = queue.text.trim();
@@ -331,6 +346,24 @@ class _HomeState extends State<Home> {
          leading:const Icon(Icons.link),
          title:const Text('Saved print server'),
          subtitle:Text('${ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'),
+       ),
+       ExpansionTile(
+         title:const Text('USB-over-IP research diagnostics'),
+         subtitle:const Text('Safe protocol detection · no USB attachment'),
+         children:[
+           const Padding(padding:EdgeInsets.all(12),
+             child:Text('NU V1.25 may use a proprietary USB-sharing protocol. This test checks only the standard Linux USB/IP device-list request on TCP/3240. It never connects to or claims the printer.')),
+           OutlinedButton.icon(onPressed:busy?null:inspectNativeUsbIp,
+             icon:const Icon(Icons.usb),label:const Text('Check standard USB/IP')),
+           if(usbIpDiagnostic!=null)Padding(padding:const EdgeInsets.all(8),
+             child:Text(usbIpDiagnostic!.detail)),
+           if(usbIpDiagnostic?.supported==true)
+             for(final dev in usbIpDiagnostic!.devices)
+               ListTile(title:Text('USB ${dev.identity}'),
+                 subtitle:Text('Bus ${dev.busId} · ${dev.interfaceCount} interface(s)')),
+           const Padding(padding:EdgeInsets.all(12),
+             child:Text('A negative result does NOT mean that NU V1.25 cannot connect. It only means the standard USB/IP protocol was not confirmed.')),
+         ],
        ),
        ExpansionTile(
          title:const Text('Advanced connection settings'),
