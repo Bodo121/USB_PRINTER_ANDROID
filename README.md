@@ -4,6 +4,22 @@ Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-702
 
 
 
+## NU v0.9.6 — evidence-based driver analysis (still offline)
+
+The supplied 2011 x64 NUServer driver has now been statically
+disassembled. Legacy bulk OUT forwards **upper-layer USB client bytes**,
+split at **1024 bytes** with a **32-byte NU header**. This indicates that
+Windows's opaque 383-byte message is not synthesized by the transport
+layer; it is probably generated upstream, but its Canon semantics
+remain unknown. Native printing is **still disabled** and NO_RETRY.
+
+New files: [IDA function labeling script](tools/reverse/nu_ida_analysis.py),
+[independent PE verifier](tools/reverse/nu_pe_static_map.py),
+[findings with confirmed RVAs](docs/NU_IDA_DRIVER_ANALYSIS.md),
+and a tested [legacy fragmentation model](lib/services/nu_legacy_fragmenter.dart).
+The PE verifier was run on the original driver; the IDA script has not
+been executed in IDA because that environment is unavailable here.
+
 ## Current status: NU v0.9.5 offline compatibility audit
 
 The 2026-11-14 Windows capture revealed a critical semantic mismatch:
