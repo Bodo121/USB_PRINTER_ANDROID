@@ -211,6 +211,42 @@ class _HomeState extends State<Home> {
      if(mounted)setState((){filename=f.name;tab=1;showPreview=false;message='Prepared: $filename';});
    }catch(e){if(mounted)setState(()=>message='File error: $e');}
  }
+ Future<void> createCanonTestPage() async {
+   try {
+     final doc=pw.Document();
+     doc.addPage(pw.Page(pageFormat:PdfPageFormat.a4,build:(context)=>pw.Column(
+       crossAxisAlignment:pw.CrossAxisAlignment.start,children:[
+         pw.Text('DigitusPrint - Canon PIXMA G2420',
+           style:pw.TextStyle(fontSize:20,fontWeight:pw.FontWeight.bold)),
+         pw.SizedBox(height:12),
+         pw.Text('One-page experimental driver test - A4, normal quality'),
+         pw.SizedBox(height:20),
+         pw.Text('Black text / lines / color patches'),
+         pw.Divider(thickness:2),
+         pw.SizedBox(height:20),
+         pw.Row(children:[
+           pw.Container(width:72,height:32,color:PdfColors.black),
+           pw.Container(width:72,height:32,color:PdfColors.cyan),
+           pw.Container(width:72,height:32,color:PdfColors.magenta),
+           pw.Container(width:72,height:32,color:PdfColors.yellow),
+         ]),
+         pw.SizedBox(height:20),
+         pw.Text('0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
+         pw.Text('abcdefghijklmnopqrstuvwxyz'),
+         pw.SizedBox(height:24),
+         pw.Text('If this page prints successfully, confirm the result in the app.'),
+         pw.Text('A server LPR acknowledgement alone does not prove printing.'),
+       ],
+     )));
+     final bytes=await doc.save();
+     if(mounted)setState((){
+       pdfBytes=bytes;filename='DigitusPrint-G2420-test.pdf';
+       showPreview=false;tab=1;message='Test page prepared. Confirm experimental printing before sending.';
+     });
+   } catch(e) {
+     if(mounted)setState(()=>message='Unable to prepare test page: $e');
+   }
+ }
  Future<void> testCanonNative() async {
    if (pdfBytes==null || !canonConsent || canonBusy) return;
    if (ip.text.trim().isEmpty || queue.text.trim().isEmpty) {
@@ -323,6 +359,8 @@ class _HomeState extends State<Home> {
        const Text('PDF, PNG, JPEG, TXT'),
        const SizedBox(height:16),
        FilledButton.icon(onPressed:pick,icon:const Icon(Icons.folder_open),label:const Text('Choose file')),
+       OutlinedButton.icon(onPressed:createCanonTestPage,
+         icon:const Icon(Icons.science),label:const Text('Prepare one-page printer test')),
        if(filename.isNotEmpty)ListTile(leading:const Icon(Icons.description),title:Text(filename)),
        Row(children:[
          Expanded(child:DropdownButtonFormField<String>(initialValue:paper,
