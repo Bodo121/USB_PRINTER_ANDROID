@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'services/lpr_transport.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
@@ -76,6 +77,17 @@ class _HomeState extends State<Home> {
    }catch(e){if(mounted)setState(()=>message='Discovery error: $e');}
    finally{if(mounted)setState(()=>busy=false);}
  }
+ Future<void> inspectQueue() async {
+   final host = ip.text.trim(), q = queue.text.trim();
+   if(host.isEmpty || q.isEmpty) {setState(()=>message='Enter or discover a hub and provide its LPR queue name');return;}
+   setState(()=>message='Inspecting LPR queue...');
+   try {
+     final response = await const LprTransport().queryQueue(host:host,queue:q);
+     if(mounted)setState(()=>message=response.trim().isEmpty
+       ? 'LPD replied with an empty queue status (printer compatibility not verified)'
+       : 'LPD queue response: ${response.trim().length>400?response.trim().substring(0,400):response.trim()}');
+   } catch(e) { if(mounted)setState(()=>message='Queue check failed: $e'); }
+ }
  Future<void> pick() async {
    try{
      final result=await FilePicker.platform.pickFiles(type:FileType.custom,
@@ -140,6 +152,7 @@ class _HomeState extends State<Home> {
        TextField(controller:queue,decoration:const InputDecoration(border:OutlineInputBorder(),labelText:'LPR queue name',helperText:'Windows DIGITUS utility → Device Properties')),
        const SizedBox(height:8),
        OutlinedButton.icon(onPressed:save,icon:const Icon(Icons.save),label:const Text('Save hub')),
+       OutlinedButton.icon(onPressed:inspectQueue,icon:const Icon(Icons.fact_check_outlined),label:const Text('Inspect LPR queue')),
        const SizedBox(height:12),
        const Card(child:Padding(padding:EdgeInsets.all(14),child:Text(
          'Canon PIXMA G2420 requires Canon raster printer commands. A detected LPR hub alone cannot print raw PDFs or photos. Android printing requires a compatible print service or bridge.'
