@@ -36,6 +36,7 @@ class NuTransferInspector {
     return true;
   }
   static int _le16(Uint8List b,int i)=>b[i]|(b[i+1]<<8);
+  static int _be16(Uint8List b,int i)=>(b[i]<<8)|b[i+1];
 
   /// Expects a complete captured application record. The 1460-byte Windows
   /// buffers can include padding; declaredBodyLength must not be inferred
@@ -47,7 +48,7 @@ class NuTransferInspector {
     if(!fromHub && !_at(bytes,0,const [
       16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1]))return null;
     if(!_at(bytes,offset,_magic)||bytes.length<offset+16)return null;
-    final size=_le16(bytes,offset+4);
+    final size=_be16(bytes,offset+4);
     final type=bytes[offset+7];
     final sequence=bytes[offset+8];
     NuControlSetup? setup;
