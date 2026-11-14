@@ -107,3 +107,13 @@ Inspected original user-uploaded files **locally without executing Windows binar
 Research correction: **KCodes NetUSB** is a separate publicly described USB-over-IP implementation, commonly documented on TCP port 20005, whereas this DA-70251 owner's observed TCP 4660 / `UNT$` traffic and NU installer branding are different. There is currently **no demonstrated equivalence**. Do not reuse KCodes framing or assume ASIX/KCodes chipset without a verified hardware/driver identification.
 
 **Next required evidence**: start a Wireshark capture *before* starting the Windows USB Server program, then Search, Connect Device, Disconnect Device, and stop. Capture server responses and connection setup. Alternatively supply the installed client binaries and driver files; setup executables are not those binaries. A successful print in Windows USB Server alone cannot validate Android LPR behavior.
+
+## User-supplied installed NU client, logs and newtest.pcapng
+
+The owner supplied `forgpete(1).zip` containing the installed `USB Server.exe`, `UNTPDLL.dll`, `DCPDLL.dll`, `PSMDLL.dll`, Windows driver `.sys` files, `Config.ini`, `log.txt`, and `newtest.pcapng`. This is substantially more useful than the installer archive.
+
+The 2026-11-14 Windows log records `[PSM] ConnectDevice <C0A8004A_9B0767DD>[0] ID=3000`, `TryConnectDevice ... Ret=1`, then `ID=3000_End`. `C0A8004A` represents 192.168.0.74. The GUI logs a device identify string `04A9:183A:9B0767DD:019249` (Canon VID 04A9, PID 183A, hub suffix 9B0767DD, serial 019249). These are *application log statuses*, not proof that a USB transfer or printed page completed.
+
+New network capture analysis found a `DCP$` UDP protocol with hub response containing an `EST$` section, server name, MAC and physical socket count. The 1059-byte response in the capture is the basis of the passive Dart parser and test. This discovery protocol is distinct from the still-unresolved `UNT$` TCP 4660 USB transfer framing.
+
+**Remaining:** decode and verify client-to-hub DCP request, successful TCP session establishment, device-claim and URB/bulk transfer framing from the capture/binaries. Do not infer that USB claim is working from a positive application log return value.

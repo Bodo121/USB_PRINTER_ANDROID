@@ -4,6 +4,7 @@ import 'services/hub_web_probe.dart';
 import 'services/usbip_discovery.dart';
 import 'services/vendor_usb_discovery.dart';
 import 'services/dcp_discovery.dart';
+import 'services/dcp_discovery.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
@@ -48,6 +49,8 @@ class _HomeState extends State<Home> {
  HubSnapshot? hubInfo;
  UsbIpResult? usbIpDiagnostic;
  NuVendorObservation? vendorUsbDiagnostic;
+ DcpListenResult? dcpDiagnostic;
+ bool dcpListening=false;
  DcpListenResult? dcpResult;
  bool listeningDcp=false;
  bool vendorProbeRunning=false;
@@ -300,6 +303,24 @@ class _HomeState extends State<Home> {
      });
    }catch(e){if(mounted)setState(()=>message='DCP listener error: $e');}
    finally{if(mounted)setState(()=>listeningDcp=false);}
+ }
+ Future<void> listenDcp() async {
+   if(dcpListening)return;
+   final host=ip.text.trim();
+   setState((){
+     dcpListening=true;
+     dcpDiagnostic=null;
+     message='Listening for DA-70251 DCP$ announcements on UDP 52340...';
+   });
+   try{
+     final result=await const DcpDiscovery().listen(expectedHub:host);
+     if(!mounted||host!=ip.text.trim())return;
+     setState((){
+       dcpDiagnostic=result;
+       message=result.detail;
+     });
+   }catch(e){if(mounted)setState(()=>message='DCP listening failed: $e');}
+   finally{if(mounted)setState(()=>dcpListening=false);}
  }
  Future<void> inspectNuVendor() async {
    if(vendorProbeRunning)return;
@@ -558,6 +579,33 @@ class _HomeState extends State<Home> {
                subtitle:Text(port.description)),
            const Text('Open TCP 4660 may match the NU V1.25 traffic captured on Windows. It is not a functional USB-over-IP connection until the vendor handshake is decoded.',
              style:TextStyle(fontSize:12)),
+         ]))),
+       const SizedBox(height:12),
+       Card.outlined(child:Padding(
+         padding:const EdgeInsets.all(12),
+         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+           const Text('DA-70251 UDP discovery',
+             style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
+           const SizedBox(height:6),
+           const Text('Listen for actual DCP$ broadcasts from the Windows-era hub; no attach commands are sent.'),
+           OutlinedButton.icon(
+             onPressed:dcpListening?null:listenDcp,
+             icon:const Icon(Icons.radar),
+             label:Text(dcpListening?'Listening...':'Listen for USB hub')),
+           if(dcpDiagnostic!=null)...[
+             Text(dcpDiagnostic!.detail),
+             if(dcpDiagnostic!.info!=null)...[
+               Text('Hub: ${dcpDiagnostic!.info!.name}'),
+               Text('MAC: ${dcpDiagnostic!.info!.mac}'),
+               Text('USB sockets: ${dcpDiagnostic!.info!.physicalPortCount}'),
+               if(dcpDiagnostic!.info!.reportedDevice!=null)
+                 Text('USB descriptor: ${dcpDiagnostic!.info!.reportedDevice}'),
+               if(dcpDiagnostic!.info!.manufacturer!=null)
+                 Text('Manufacturer: ${dcpDiagnostic!.info!.manufacturer}'),
+               if(dcpDiagnostic!.info!.serial!=null)
+                 Text('USB serial: ${dcpDiagnostic!.info!.serial}'),
+             ]
+           ]
          ]))),
        const SizedBox(height:12),
        Card.outlined(child:Padding(
