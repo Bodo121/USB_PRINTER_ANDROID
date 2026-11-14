@@ -31,7 +31,14 @@ class NuWire {
       b.setAll(44,const <int>[0x40,0x10,0x92,0x34]);
     } else {
       b[34]=0x30;b[35]=0xf0;
-      b.setAll(44,const <int>[0,0x12,0x72,0x20]);
+      if(op==4){
+        // Verified against Windows seq42,43,44: logical NU pipe 0x81.
+        // This is NOT necessarily the raw USB descriptor endpoint number.
+        b.setAll(44,const <int>[0,0x12,0x82,0x24]);
+      } else {
+        // Observed on Windows printer-class bulk OUT seq41.
+        b.setAll(44,const <int>[0,0x12,0x72,0x20]);
+      }
     }
     if(bytes!=null)b.setRange(48,48+bytes.length,bytes);
     return b;
@@ -40,8 +47,9 @@ class NuWire {
   static Uint8List bulkOut(Uint8List bytes,{required int sequence,int endpoint=1}) =>
     _request(2,sequence,endpoint,bytes.length,bytes);
 
-  /// 02/04 read metadata layout remains provisional; use the enumerated
-  /// printer-class IN endpoint, not an unrelated interface's endpoint.
+  /// The Windows trace uses logical NU pipe 0x81 for 02/04 reads;
+  /// it must not be replaced by the physical USB descriptor's 0x82.
+  /// Its mapping to physical USB endpoints is still unverified.
   static Uint8List bulkIn({required int sequence,required int endpoint,
       int requestedLength=1024}) =>
     _request(4,sequence,endpoint,requestedLength,null);
