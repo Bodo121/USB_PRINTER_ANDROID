@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'nu_session.dart';
+import 'nu_configuration.dart';
 import 'usb_port_diagnostics.dart';
 
 /// Experimental DA-70251 transport: captured NU greeting followed by a
@@ -16,6 +17,8 @@ class NuCanonConnection {
   Completer<void>? _signal;
   bool _ended=false;
   String? _connectedHost;
+  NuConfiguration? configuration;
+  NuInterface? get printerInterface => configuration?.printerInterface;
 
   bool get isConnected => _socket!=null && !_ended &&
       _connectedHost!=null;
@@ -65,6 +68,40 @@ class NuCanonConnection {
       0x80,0x06,0x00,0x01,0x00,0x00,0x12,0x00
     ]);
     return packet;
+  }
+
+  /// Captured follow-up USB GET_DESCRIPTOR(CONFIGURATION) request. The
+  /// Windows trace issues a nine-byte header read followed by the full
+  /// 62-byte configuration read. The sequence bytes 0x16/0x17 are
+  /// intentionally confined to this single captured startup sequence.
+  static Uint8List capturedConfigurationRequest({
+    required int sequence,required int length,
+  }) {
+    if(!((sequence==0x16 && length==9) ||
+         (sequence==0x17 && length==62))){
+      throw const FormatException('Unsupported captured config request');
+    }
+    final packet=capturedDeviceDescriptorRequest();
+    packet[24]=sequence;
+    packet[34]=2;
+    packet[38]=length;
+    packet[51]=2;
+    packet[54]=length;
+    return packet;
+  }
+
+  static Uint8List? configurationReplyPayload(Uint8List reply,{
+    required int sequence,required int expectedLength,
+  }) {
+    if(reply.length!=40+expectedLength ||
+       reply[0]!=0x55||reply[1]!=0x4e||reply[2]!=0x54||
+       reply[3]!=0x24 || reply[6]!=2 || reply[7]!=1 ||
+       reply[8]!=sequence ||
+       reply[32]!=0x80||reply[33]!=6||
+       reply[34]!=0||reply[35]!=2||
+       reply[38]!=expectedLength||reply[39]!=0 ||
+       reply[40]!=9||reply[41]!=2)return null;
+    return Uint8List.fromList(reply.sublist(40));
   }
 
   static bool verifiesCanon(Uint8List reply) {
@@ -132,9 +169,39 @@ class NuCanonConnection {
         throw const FormatException(
           'Hub answered, but Canon 04A9:183A USB descriptor was not verified');
       }
+      // Mirror Windows' read-only configuration enumeration. The descriptor
+      // contains the class-07 printer interface and its bulk OUT endpoint.
+      socket.add(capturedConfigurationRequest(sequence:0x16,length:9));
+      await socket.flush();
+      final shortReply=await _readExact(49,const Duration(seconds:5));
+      final shortData=configurationReplyPayload(shortReply,
+        sequence:0x16,expectedLength:9);
+      if(shortData==null || shortData[2]!=62 || shortData[3]!=0){
+        throw const FormatException(
+          'Canon configuration header not validated (expected 62 bytes)');
+      }
+      socket.add(capturedConfigurationRequest(sequence:0x17,length:62));
+      await socket.flush();
+      final fullReply=await _readExact(102,const Duration(seconds:5));
+      final descriptor=configurationReplyPayload(fullReply,
+        sequence:0x17,expectedLength:62);
+      if(descriptor==null){
+        throw const FormatException(
+          'Canon 62-byte configuration reply not validated');
+      }
+      final parsed=NuConfigurationDecoder.decode(descriptor);
+      final printInterface=parsed.printerInterface;
+      if(printInterface==null){
+        throw const FormatException(
+          'No printer-class USB interface with bulk OUT endpoint');
+      }
+      configuration=parsed;
       _connectedHost=host;
-      return 'Canon 04A9:183A USB device descriptor verified over TCP 4660. '
-        'NU socket is open. Exclusive claim and printing are NOT verified.';
+      return 'Canon 04A9:183A verified. USB configuration: '
+        '${parsed.interfaces.length} interfaces; '
+        'printer interface ${printInterface.number} '
+        'bulk OUT ${printInterface.bulkOut!.hexAddress}. '
+        'NU socket open. USB claim and bulk printing NOT verified.';
     } catch (_) {
       await disconnect();
       rethrow;
@@ -145,6 +212,7 @@ class NuCanonConnection {
   /// has not been proven; do not advertise this as exclusive claim release.
   Future<void> disconnect() async {
     _connectedHost=null;
+    configuration=null;
     final subscription=_subscription;
     _subscription=null;
     await subscription?.cancel();

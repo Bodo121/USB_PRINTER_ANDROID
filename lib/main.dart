@@ -709,6 +709,13 @@ class _HomeState extends State<Home> {
            ]),
            const SizedBox(height:8),
            Text(nuConnectionMessage),
+           if(nuConnection.printerInterface!=null)...[
+             Text('USB printer interface: ${nuConnection.printerInterface!.number}'),
+             Text('Bulk OUT: ${nuConnection.printerInterface!.bulkOut!.hexAddress}'),
+             const Text('Bulk endpoint detected from the Canon USB configuration; '
+               'native print transfers require separate NU framing validation.',
+               style:TextStyle(fontSize:12)),
+           ],
            if(nuConnection.isConnected)
              const Text('USB descriptor verified. Native NU print-data '
                'transfers are not implemented; the Print tab retains the '
@@ -785,6 +792,7 @@ class _HomeState extends State<Home> {
        const SizedBox(height:12),
        const Divider(),
        Text('Native Canon test print',style:style.titleLarge),
+       const Text('NOTE: This button uses experimental LPR, NOT the working NU TCP 4660 USB connection. Native NU bulk printing is not enabled.'),
        const SizedBox(height:8),
        const Text('Experimental: converts ONLY PAGE 1 to Canon G2020-series IVEC/PWG raster and sends it to your DIGITUS LPR queue. G2420 compatibility and hub forwarding are not yet verified; ink and paper may be consumed. No Windows or server required.'),
        SwitchListTile(title:const Text('Grayscale'),subtitle:const Text('Canon normal-quality A4'),value:canonGrayscale,
