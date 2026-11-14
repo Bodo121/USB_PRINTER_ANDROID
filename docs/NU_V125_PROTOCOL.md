@@ -117,3 +117,29 @@ The 2026-11-14 Windows log records `[PSM] ConnectDevice <C0A8004A_9B0767DD>[0] I
 New network capture analysis found a `DCP$` UDP protocol with hub response containing an `EST$` section, server name, MAC and physical socket count. The 1059-byte response in the capture is the basis of the passive Dart parser and test. This discovery protocol is distinct from the still-unresolved `UNT$` TCP 4660 USB transfer framing.
 
 **Remaining:** decode and verify client-to-hub DCP request, successful TCP session establishment, device-claim and URB/bulk transfer framing from the capture/binaries. Do not infer that USB claim is working from a positive application log return value.
+
+## Packet-level findings from plm222.pcapng and v0.9.1 diagnostics (14 Nov 2026)
+
+Re-parsed original owner capture directly, using PCAPNG enhanced-packet blocks, IPv4 TCP sequence numbers and UDP payloads. Unlike earlier traces, it begins with a live TCP connection to the physical DA-70251. Distinct sample frames below are taken from the actual capture; TCP application payloads are listed by direction and start length; TCP segments may include retransmissions.
+
+**Active UDP discovery (Windows PC 192.168.0.117 → hub 192.168.0.74):**
+- Source UDP 52340 → hub UDP 52330, 40-byte query:
+  `44 43 50 24 00 00 00 0d 62 b9 00 00 cc 74 02 00`, followed by 24 zero bytes.
+- `DCP$` is ASCII at offset 0, command `00 00 00 0d` at 4..7, per-query correlation token at 8..9, source port `cc 74` (=52340) at 12..13, `02 00` at 14..15.
+- Hub responds UDP 52330 → PC UDP 52340 with 1059-byte `DCP$` result. Response echoes correlation token, includes MAC at offset 16, physical-port count at 32, station name at 40, `EST$` at 104, IPv4 at 114, and nested device `DCP$` at 176. Device name `G2010 series` at 200, `Canon` at 232, serial `019249` at 272.
+- **Implementation:** `DcpDiscovery.discover` sends this 40-byte observed request with a fresh 16-bit token, listens on matching UDP source port and validates response token/IP/source.
+
+**First TCP greeting, TCP 4660 (observed, not speculative):**
+- Client's first application payload is **116 bytes**. Offsets 0..15: `10 0f 0e 0d 0c 0b 0a 09 08 07 06 05 04 03 02 01`; 16..19: `UNT$`; 20..27: `00 44 02 0a 14 00 80 00`; offset 32: `02`; offset 48: Windows computer name, NUL-terminated; offsets 112..115: local IPv4.
+- Hub's first response is **100 bytes**: `55 4e 54 24 00 44 00 0b 14 00 80 00` followed by similar computer-name and local-IP fields.
+- This suggests a 16-byte client preamble, a 32-byte base header and a variable payload, but exact field semantics are not completely proven.
+- **Implementation:** `NuSessionDiagnostics.greeting` sends only this initial greeting using an Android client name and the phone's LAN IPv4; it validates the 100-byte response and immediately closes. It does NOT claim a USB port or queue a transfer; the user must run it manually.
+
+**Confirmed subsequent USB control exchange in capture:**
+- After greeting, Windows sends a TCP payload of **1460 bytes** with the 16-byte prefix, `UNT$ 00 08 02 00 15 00 ...`; hub replies with **58 bytes**: `UNT$ 00 1a 02 01 15 00 ...` and visible standard USB descriptor data `12 01 00 02 ... a9 04 3a 18` indicating Canon USB VID `04A9`, PID `183A`.
+- Following messages request USB configuration and UTF-16LE string descriptors (Canon / G2010 series / serial), then receive bounded responses.
+- In a later active data exchange, Windows sends `UNT$ ... 02 04` and hub responds with `UNT$ ... 02 05` (including 32-byte responses), consistent with paired requests/completions, but *not enough evidence* to declare all endpoint, URB, error, length and toggle semantics.
+- Client application payloads frequently appear as **1460-byte segments** regardless of a much smaller declared body size; do not assume these are discrete USB transfer packets or blindly replay fixed 1460-byte buffers.
+- The captured approximately 4.59 MiB PC→hub demonstrates substantial activity, but it is not independent proof of printed paper or compatible Canon IVEC/PWG output.
+
+**Remaining before enabling native USB printing:** confirm exact URB request framing/endpoint semantics and response status, transfer completion/short packets and retries, attach/exclusive-use and disconnect behavior, and verify raster bytes physically on G2420. As of v0.9.1, no Android USB print job is sent over TCP 4660. This is a partial protocol implementation, not a complete replacement for the Windows USB stack.

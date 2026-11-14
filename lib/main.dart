@@ -4,7 +4,7 @@ import 'services/hub_web_probe.dart';
 import 'services/usbip_discovery.dart';
 import 'services/vendor_usb_discovery.dart';
 import 'services/dcp_discovery.dart';
-import 'services/dcp_discovery.dart';
+import 'services/nu_session.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
@@ -51,8 +51,8 @@ class _HomeState extends State<Home> {
  NuVendorObservation? vendorUsbDiagnostic;
  DcpListenResult? dcpDiagnostic;
  bool dcpListening=false;
- DcpListenResult? dcpResult;
- bool listeningDcp=false;
+ NuHelloResult? nuGreetingResult;
+ bool nuGreetingRunning=false;
  bool vendorProbeRunning=false;
  int scanGeneration=0;
  Uint8List? pdfBytes; String filename='';
@@ -65,7 +65,7 @@ class _HomeState extends State<Home> {
    setState((){
      ip.text=prefs.getString('ip')??'192.168.0.74';
      queue.text=prefs.getString('queue')??'a9043a1802';
-     servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660,3240,515';
+     servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660,3240,515,9100';
      selectedUsbSocket=(prefs.getInt('usbSocket')??1).clamp(1,4);
      history=prefs.getStringList('history')??[];
      canonDataFirst=prefs.getBool('canonDataFirst')??false;
@@ -286,34 +286,16 @@ class _HomeState extends State<Home> {
    }catch(e){if(mounted)setState(()=>message='TCP port check failed: $e');}
    finally {if(mounted)setState(()=>probingServices=false);}
  }
- Future<void> listenForDcp() async {
-   if(listeningDcp)return;
-   final host=ip.text.trim();
-   setState((){
-     listeningDcp=true;
-     dcpResult=null;
-     message='Listening for DA-70251 discovery on UDP 52340...';
-   });
-   try {
-     final result=await const DcpDiscovery().listen(expectedHub:host);
-     if(!mounted||host!=ip.text.trim())return;
-     setState((){
-       dcpResult=result;
-       message=result.detail;
-     });
-   }catch(e){if(mounted)setState(()=>message='DCP listener error: $e');}
-   finally{if(mounted)setState(()=>listeningDcp=false);}
- }
  Future<void> listenDcp() async {
    if(dcpListening)return;
    final host=ip.text.trim();
    setState((){
      dcpListening=true;
      dcpDiagnostic=null;
-     message='Listening for DA-70251 DCP$ announcements on UDP 52340...';
+     message='Sending captured DA-70251 UDP discovery request...';
    });
    try{
-     final result=await const DcpDiscovery().listen(expectedHub:host);
+     final result=await const DcpDiscovery().discover(expectedHub:host);
      if(!mounted||host!=ip.text.trim())return;
      setState((){
        dcpDiagnostic=result;
@@ -321,6 +303,24 @@ class _HomeState extends State<Home> {
      });
    }catch(e){if(mounted)setState(()=>message='DCP listening failed: $e');}
    finally{if(mounted)setState(()=>dcpListening=false);}
+ }
+ Future<void> inspectNuGreeting() async {
+   if(nuGreetingRunning)return;
+   final host=ip.text.trim();
+   setState((){
+     nuGreetingRunning=true;
+     nuGreetingResult=null;
+     message='Testing captured TCP 4660 session greeting...';
+   });
+   try{
+     final result=await const NuSessionDiagnostics().greeting(host);
+     if(!mounted||host!=ip.text.trim())return;
+     setState((){
+       nuGreetingResult=result;
+       message=result.detail;
+     });
+   }catch(e){if(mounted)setState(()=>message='UNT session greeting failed: $e');}
+   finally{if(mounted)setState(()=>nuGreetingRunning=false);}
  }
  Future<void> inspectNuVendor() async {
    if(vendorProbeRunning)return;
@@ -587,11 +587,11 @@ class _HomeState extends State<Home> {
            const Text('DA-70251 UDP discovery',
              style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
            const SizedBox(height:6),
-           const Text('Listen for actual DCP$ broadcasts from the Windows-era hub; no attach commands are sent.'),
+           const Text('Send the exact 40-byte DCP discovery request from the Windows capture. No printer is claimed.'),
            OutlinedButton.icon(
              onPressed:dcpListening?null:listenDcp,
              icon:const Icon(Icons.radar),
-             label:Text(dcpListening?'Listening...':'Listen for USB hub')),
+             label:Text(dcpListening?'Discovering...':'Discover USB hub and devices')),
            if(dcpDiagnostic!=null)...[
              Text(dcpDiagnostic!.detail),
              if(dcpDiagnostic!.info!=null)...[
@@ -635,22 +635,20 @@ class _HomeState extends State<Home> {
        Card.outlined(child:Padding(
          padding:const EdgeInsets.all(12),
          child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-           const Text('DA-70251 native USB discovery',style:TextStyle(fontSize:16,fontWeight:FontWeight.bold)),
-           const SizedBox(height:6),
-           const Text('Listen for hub DCP\$ announcements on UDP 52340. No USB commands or device claims are transmitted.'),
+           const Text('NU V1.25 TCP handshake',
+             style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
+           const Text('Sends the 116-byte session greeting captured from Windows '
+             'and checks the 100-byte UNT response. Does NOT attach the Canon or print.'),
            OutlinedButton.icon(
-             onPressed:listeningDcp?null:listenForDcp,
-             icon:const Icon(Icons.sensors),
-             label:Text(listeningDcp?'Listening...':'Listen for USB devices')),
-           if(dcpResult!=null)Text(dcpResult!.detail),
-           if(dcpResult?.info!=null)...[
-             ListTile(title:Text(dcpResult!.info!.name),
-               subtitle:Text('MAC ${dcpResult!.info!.mac} · ${dcpResult!.info!.physicalPortCount} USB sockets')),
-             if(dcpResult!.info!.reportedDevice!=null)
-               ListTile(title:Text('USB descriptor: ${dcpResult!.info!.reportedDevice}'),
-                 subtitle:Text('Manufacturer: ${dcpResult!.info!.manufacturer??'Unknown'}')),
+             onPressed:nuGreetingRunning?null:inspectNuGreeting,
+             icon:const Icon(Icons.handshake),
+             label:Text(nuGreetingRunning?'Testing...':'Test vendor handshake')),
+           if(nuGreetingResult!=null)...[
+             Text(nuGreetingResult!.accepted
+                 ? 'Hub accepted session greeting'
+                 : 'Handshake not confirmed'),
+             Text(nuGreetingResult!.detail),
            ],
-           const Text('Discovery alone is not USB attachment or print support.',style:TextStyle(fontSize:12)),
          ]))),
        const SizedBox(height:12),
        ExpansionTile(
