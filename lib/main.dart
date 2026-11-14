@@ -43,7 +43,7 @@ class _HomeState extends State<Home> {
  String updateMessage='';
  Map<String,dynamic>? availableUpdate;
  List<NetworkServicePort> networkServices=[];
- int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
+ int tab=0; bool busy=false,landscape=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
  HubSnapshot? hubInfo;
@@ -54,7 +54,6 @@ class _HomeState extends State<Home> {
  final NuCanonConnection nuConnection=NuCanonConnection();
  bool nuConnectRunning=false;
  bool nuPrinterIdRunning=false;
- bool nuExperimentalPrint=false;
  String nuPrinterIdMessage='';
  String nuConnectionMessage='Not connected to Canon USB device';
  NuHelloResult? nuGreetingResult;
@@ -382,11 +381,7 @@ class _HomeState extends State<Home> {
    }
  }
  Future<void> testCanonNative() async {
-   if(pdfBytes==null || !canonConsent || canonBusy || !nuExperimentalPrint)return;
-   if(!nuConnection.isConnected || nuConnection.ieee1284DeviceId==null){
-     setState(()=>message='Connect NU and read Canon printer-class ID first.');
-     return;
-   }
+   if(pdfBytes==null || canonBusy)return;
    setState((){
      canonBusy=true;
      message='Rendering first PDF page into Canon IVEC raster...';
@@ -398,15 +393,15 @@ class _HomeState extends State<Home> {
        });
      if(raster==null||raster.isEmpty)throw StateError('No raster generated');
      if(!mounted)return;
-     setState(()=>message='NU handshake probe: 383 bytes only, no complete print; no automatic retry...');
-     final result=await nuConnection.experimentalNuPrint(raster);
-     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · NU handshake probe: 383 of ${raster.length} bytes; no full print');
+     setState(()=>message='Comparing the generated IVEC header with the Windows NU capture offline...');
+     final result=await nuConnection.analyzeNuPrintPlan(raster);
+     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · Offline NU/IVEC compatibility audit (${raster.length} bytes); 0 USB bytes sent');
      history=history.take(20).toList();
      final prefs=await SharedPreferences.getInstance();
      await prefs.setStringList('history',history);
      if(mounted)setState(()=>message=result);
    }catch(e){
-     if(mounted)setState(()=>message='NU print attempt failed (do not blindly retry): $e');
+     if(mounted)setState(()=>message='NU offline compatibility audit failed: $e');
    }finally{
      if(mounted)setState(()=>canonBusy=false);
    }
@@ -711,49 +706,38 @@ class _HomeState extends State<Home> {
        const SizedBox(height:8),
        const SizedBox(height:12),
        const Divider(),
-       Text('Native NU Canon test print',style:style.titleLarge),
+       Text('NU / Canon compatibility audit',style:style.titleLarge),
        const SizedBox(height:8),
-       const Text('Experimental direct USB-over-IP printing on TCP 4660. '
-         'No LPR or Windows. The captured NU bulk framing is not fully '
-         'validated and a failed attempt may leave output status uncertain. '
-         'Do not repeat a job without checking the printer.'),
+       const Text('Read-only, offline analysis of the generated Canon IVEC '
+         'stream versus the Windows NU print handshake. '
+         'The captured 383-byte USB setup command is not interchangeable '
+         'with the first 383 bytes of the rendered document. '
+         'No USB commands are sent, and no page is printed.'),
        SwitchListTile(
-         title:const Text('Enable experimental NU handshake probe'),
-         subtitle:const Text('Opt-in only; requires an open verified NU session '
-           'and Canon printer-class ID (IVEC).'),
-         value:nuExperimentalPrint,
-         onChanged:canonBusy?null:(value)=>setState(()=>nuExperimentalPrint=value)),
-       SwitchListTile(title:const Text('Grayscale'),
-         subtitle:const Text('Canon G2020-family IVEC raster, A4 normal quality'),
+         title:const Text('Grayscale output encoding'),
+         subtitle:const Text('Generate an A4 Canon G2020-family IVEC '
+           'sample for offline format inspection only'),
          value:canonGrayscale,
          onChanged:canonBusy?null:(v)=>setState(()=>canonGrayscale=v)),
-       CheckboxListTile(
-         title:const Text('I accept a limited experimental 383-byte USB write'),
-         value:canonConsent,
-         onChanged:canonBusy?null:(v)=>setState(()=>canonConsent=v??false)),
        FilledButton.icon(
-         onPressed:pdfBytes!=null && canonConsent && nuExperimentalPrint &&
-           nuConnection.isConnected &&
-           nuConnection.ieee1284DeviceId!=null && !canonBusy
-             ?testCanonNative:null,
-         icon:const Icon(Icons.print),
-         label:Text(canonBusy?'Probing NU handshake...':
-           'Run NU handshake probe (not full printing)')),
-       const Text('Requires Connect and verify Canon USB, then Read Canon '
-         'printer-class ID on the Discover tab. USB completion does not '
-         'prove a page printed. Never automatically retry.'),
+         onPressed:pdfBytes!=null && !canonBusy ?testCanonNative:null,
+         icon:const Icon(Icons.shield_outlined),
+         label:Text(canonBusy?'Analyzing IVEC stream offline...':
+           'Analyze selected page (no printer traffic)')),
+       const Text('No printer connection is required. Full NU printing '
+         'remains unavailable until the setup exchange and G2010 model '
+         'compatibility are decoded and verified.'),
        if(nuConnection.printTrace.isNotEmpty)
          OutlinedButton.icon(
            onPressed:() async {
              await Clipboard.setData(ClipboardData(text:nuConnection.printTrace));
              if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-               const SnackBar(content:Text('Complete NU TX/RX trace copied. '
-                 'Review before sharing: RX may include printer status data.')));
+               const SnackBar(content:Text('Offline compatibility report copied')));
            },
            icon:const Icon(Icons.copy_all),
-           label:const Text('Copy full NU TX/RX debug log')),
-       const Text('This diagnostic deliberately stops after NU seq44. The G2010 USB identity does '
-         'not validate the bundled G2020-family raster profile.'),
+           label:const Text('Copy NU compatibility report')),
+       const Text('Historical NU TX/RX traces remain in earlier builds. '
+         'This build sends zero new NU messages during analysis.'),
 
      ]else...[
        Text('Activity history',style:style.headlineMedium),
