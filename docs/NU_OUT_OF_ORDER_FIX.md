@@ -31,3 +31,26 @@ does not establish all completion status fields, transfer flow control,
 or an entire successful page-print session. A 02/03 completion
 does not guarantee physical output. Do not repeat an uncertain
 print without checking the printer and hub state.
+
+## v0.9.3: bidirectional NU printing experiment
+
+The sequence-43 stall happened after two 383-byte OUT completions. The
+old Android sender never issued 02/04 bulk IN reads or handled the
+complete 16-bit sequence field. The new implementation:
+
+- Builds padded 1460-byte client records; hub replies are parsed as
+  32-byte headers plus big-endian-declared bodies.
+- Correlates 02/03, 02/05, and 02/09 replies by LE uint16 sequence, not
+  arrival order.
+- Starts with 02/08 preparation sequence 40, 383-byte 02/02 OUT at
+  sequence 41, and three 02/04 reads at sequences 42-44.
+- Uses two-OUT/two-IN windows with 1024-byte OUT data chunks thereafter.
+- Provides first-48-byte TX/RX logs and per-request timeout diagnostics
+  through a copyable Print tab trace.
+- Disconnects on failure and never resends uncertain print bytes.
+
+The first five operations are modeled from the described Windows capture;
+the remaining 50-message test continuation is synthetic. The exact 02/04
+header flags, Canon G2010 vs G2020 raster compatibility, printer status,
+claim state, and end-to-end physical output remain unverified. This is
+not a confirmed printing driver. 
