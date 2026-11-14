@@ -36,3 +36,22 @@ Do **not** assume this is Linux USB/IP, blindly send USB URBs to unverified devi
 - https://archive.org/details/nu-v-1.25
 - https://www.kernel.org/doc/html/v5.18/usb/usbip_protocol.html
 - https://ftp.assmann.com/pub/DA-/DA-70254___4016032390091/DA-70254_manual_English_20170126.pdf
+
+## Findings from user capture `printer.pcapng` (2026-11-14)
+
+The supplied 52 MiB PCAPNG was parsed locally, filtering IP packets involving the hub at `192.168.0.74`. It includes a large amount of unrelated public Internet TLS traffic. The capture **must not be committed raw**.
+
+**Confirmed:**
+
+- Windows host `192.168.0.117` communicates with the hub `192.168.0.74` on **TCP port 4660**, from client TCP source port `50531`.
+- Exactly **8 observed client TCP payload segments**, each **1,460 bytes**, total **11,680 payload bytes**, approximately 9.07 seconds apart.
+- Each starts with `10 0f 0e 0d 0c 0b 0a 09 08 07 06 05 04 03 02 01 55 4e 54 24` (ASCII **`UNT$`** at offset 16).
+- A byte near offset 24 increments `57,58,59,5a,5b,5c,5d,5e`. This is *consistent with* a counter but **the field semantics are unverified**. Most of each message consists of zero bytes.
+- The hub emitted 544 captured TCP packets in this flow, **no TCP application payload** within those packets; the PC appears to have captured an established session *after* its initial handshake.
+- No UDP traffic from the PC to local broadcast/discovery destinations was seen in the captured interval; no USB attach handshake or device-list response is present.
+
+**Interpretation:** TCP 4660 is a strong vendor-protocol candidate for this network USB hub. It is **not** LPR TCP 515 and **not** Linux USB/IP TCP 3240. The observed client messages have a `UNT$` signature. Neither their meaning nor the complete protocol has been established; they must **not** be replayed as USB commands.
+
+**Next focused capture:** close the Windows utility completely; start Wireshark **before opening** the utility; apply display filter `ip.addr == 192.168.0.74 || udp` to inspect discovery broadcasts; then launch the utility, click Search, Connect Device, Disconnect Device, and stop capture. Capture the TCP SYN/handshake and both-direction application data. With this, infer whether TCP 4660 is an attach/data channel or only a polling/keepalive channel. If the hub is already connected, explicitly disconnect first. A 30–60-second focused trace is more useful and privacy-friendly than a general long capture.
+
+Do not infer Canon model or LPR queue from the `UNT$` stream. The printer remains user-configured **Canon PIXMA G2420**.
