@@ -5,6 +5,7 @@ import 'services/usbip_discovery.dart';
 import 'services/vendor_usb_discovery.dart';
 import 'services/dcp_discovery.dart';
 import 'services/nu_session.dart';
+import 'services/nu_canon_connection.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
@@ -51,6 +52,9 @@ class _HomeState extends State<Home> {
  NuVendorObservation? vendorUsbDiagnostic;
  DcpListenResult? dcpDiagnostic;
  bool dcpListening=false;
+ final NuCanonConnection nuConnection=NuCanonConnection();
+ bool nuConnectRunning=false;
+ String nuConnectionMessage='Not connected to Canon USB device';
  NuHelloResult? nuGreetingResult;
  bool nuGreetingRunning=false;
  bool vendorProbeRunning=false;
@@ -322,6 +326,34 @@ class _HomeState extends State<Home> {
    }catch(e){if(mounted)setState(()=>message='UNT session greeting failed: $e');}
    finally{if(mounted)setState(()=>nuGreetingRunning=false);}
  }
+ Future<void> connectCanonNu() async {
+   if(nuConnectRunning||nuConnection.isConnected)return;
+   setState((){
+     nuConnectRunning=true;
+     nuConnectionMessage='Opening captured NU session and reading Canon USB descriptor...';
+   });
+   try{
+     final detail=await nuConnection.connect(ip.text.trim());
+     if(mounted)setState((){
+       nuConnectionMessage=detail;
+       message=detail;
+     });
+   }catch(e){
+     if(mounted)setState((){
+       nuConnectionMessage='USB descriptor connection failed: $e';
+       message=nuConnectionMessage;
+     });
+   }finally{
+     if(mounted)setState(()=>nuConnectRunning=false);
+   }
+ }
+ Future<void> disconnectCanonNu() async {
+   await nuConnection.disconnect();
+   if(mounted)setState((){
+     nuConnectionMessage='NU TCP session closed. Vendor release opcode unverified.';
+     message=nuConnectionMessage;
+   });
+ }
  Future<void> inspectNuVendor() async {
    if(vendorProbeRunning)return;
    final host=ip.text.trim();
@@ -458,7 +490,7 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>message='Sent to Android print dialog (not confirmed printed)');
    }catch(e){if(mounted)setState(()=>message='Print error: $e');}
  }
- @override void dispose(){scanGeneration++;ip.dispose();queue.dispose();servicePorts.dispose();super.dispose();}
+ @override void dispose(){nuConnection.disconnect();scanGeneration++;ip.dispose();queue.dispose();servicePorts.dispose();super.dispose();}
  @override Widget build(BuildContext context){
    final style=Theme.of(context).textTheme;
    return Scaffold(appBar:AppBar(title:const Text('Digitus Print'),actions:[
@@ -651,6 +683,38 @@ class _HomeState extends State<Home> {
            ],
          ]))),
        const SizedBox(height:12),
+       const SizedBox(height:12),
+       Card.outlined(child:Padding(padding:const EdgeInsets.all(12),
+         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+           const Text('Experimental Canon USB connection',
+             style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
+           const SizedBox(height:6),
+           const Text('Uses the captured NU greeting and one READ-ONLY USB '
+             'GET_DESCRIPTOR request. A verified Canon 04A9:183A reply confirms '
+             'USB communication, NOT an exclusive device claim or printing. '
+             'Close the Windows USB Server utility before testing.'),
+           const SizedBox(height:8),
+           Wrap(spacing:8,children:[
+             FilledButton.icon(
+               onPressed:nuConnectRunning||nuConnection.isConnected
+                 ?null:connectCanonNu,
+               icon:const Icon(Icons.usb),
+               label:Text(nuConnectRunning?'Connecting...':
+                 'Connect and verify Canon USB')),
+             OutlinedButton.icon(
+               onPressed:nuConnectRunning||!nuConnection.isConnected
+                 ?null:disconnectCanonNu,
+               icon:const Icon(Icons.link_off),
+               label:const Text('Disconnect NU session')),
+           ]),
+           const SizedBox(height:8),
+           Text(nuConnectionMessage),
+           if(nuConnection.isConnected)
+             const Text('USB descriptor verified. Native NU print-data '
+               'transfers are not implemented; the Print tab retains the '
+               'existing experimental LPR/Android print paths.',
+               style:TextStyle(fontSize:12)),
+         ]))),
        ExpansionTile(
          title:const Text('USB-over-IP research diagnostics'),
          subtitle:const Text('Safe protocol detection · no USB attachment'),
