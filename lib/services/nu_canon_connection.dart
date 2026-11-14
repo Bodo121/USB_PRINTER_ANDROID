@@ -316,7 +316,7 @@ class NuCanonConnection {
       _logPrint('LIVE NU PRINT BLOCKED: cannot construct device setup '
         'from the captured session. No bytes sent to the hub.');
       return 'NU protocol mismatch confirmed offline. Zero USB bytes '
-        'transmitted. Tap Copy full NU TX/RX debug log to see why '
+        'transmitted. Tap Copy NU compatibility report to see why '
         'native printing is not yet supported.';
     }finally{
       _printing=false;
