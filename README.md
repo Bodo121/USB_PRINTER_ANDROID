@@ -68,3 +68,7 @@ RFC 1179 specifies the client-side source TCP port range 721–731, while Androi
 - New installations must enable **Install unknown apps** for DigitusPrint through Android settings. Updates prompt for explicit Android approval.
 - TCP `9100` was added to the default read-only network port checks. An open port does not prove that the DA-70254 forwards printer data. The app intentionally **does not** blast raster data to an unverified raw socket.
 - The existing **Data First** switch remains a manual, single-job diagnostic. Neither this change nor the updater tests the printer physically.
+
+## v0.8.1 vendor USB-over-IP research track
+
+DigitusPrint now also includes a passive native-Dart probe for the Windows NU V1.25 **TCP 4660** service, plus a unit-tested `UNT$` fingerprint recognizer based on the real uploaded packet capture. The probe connects briefly and listens without sending *any* client handshake or USB commands. It can report TCP reachability or a spontaneous server greeting, but **it cannot claim a USB port or print**. Those operations require confirmed vendor opcodes and framing from a capture starting *before* Windows utility Search/Connect/Disconnect. The app continues to support the separate LPR track. No Windows installer or binary is bundled.

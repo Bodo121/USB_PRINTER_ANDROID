@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'services/hub_discovery.dart';
 import 'services/hub_web_probe.dart';
 import 'services/usbip_discovery.dart';
+import 'services/vendor_usb_discovery.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
@@ -45,6 +46,8 @@ class _HomeState extends State<Home> {
  String message='Ready to scan',paper='A4';
  HubSnapshot? hubInfo;
  UsbIpResult? usbIpDiagnostic;
+ NuVendorObservation? vendorUsbDiagnostic;
+ bool vendorProbeRunning=false;
  int scanGeneration=0;
  Uint8List? pdfBytes; String filename='';
  List<String> hosts=[],history=[];
@@ -276,6 +279,24 @@ class _HomeState extends State<Home> {
      await prefs.setString('usbIpTcpPorts',servicePorts.text.trim());
    }catch(e){if(mounted)setState(()=>message='TCP port check failed: $e');}
    finally {if(mounted)setState(()=>probingServices=false);}
+ }
+ Future<void> inspectNuVendor() async {
+   if(vendorProbeRunning)return;
+   final host=ip.text.trim();
+   setState((){
+     vendorProbeRunning=true;
+     vendorUsbDiagnostic=null;
+     message='Observing NU V1.25 TCP port 4660 (no USB commands sent)...';
+   });
+   try{
+     final result=await const NuVendorProbe().observe(host);
+     if(!mounted||host!=ip.text.trim())return;
+     setState((){
+       vendorUsbDiagnostic=result;
+       message=result.detail;
+     });
+   }catch(e){if(mounted)setState(()=>message='NU protocol observation failed: $e');}
+   finally{if(mounted)setState(()=>vendorProbeRunning=false);}
  }
  Future<void> inspectNativeUsbIp() async {
    final host=ip.text.trim();
@@ -515,6 +536,30 @@ class _HomeState extends State<Home> {
                title:Text('TCP ${port.port}: ${port.open?'Open':'No connection'}'),
                subtitle:Text(port.description)),
            const Text('Open TCP 4660 may match the NU V1.25 traffic captured on Windows. It is not a functional USB-over-IP connection until the vendor handshake is decoded.',
+             style:TextStyle(fontSize:12)),
+         ]))),
+       const SizedBox(height:12),
+       Card.outlined(child:Padding(
+         padding:const EdgeInsets.all(12),
+         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+           const Row(children:[Icon(Icons.usb),SizedBox(width:8),
+             Expanded(child:Text('NU V1.25 direct USB research',
+               style:TextStyle(fontSize:16,fontWeight:FontWeight.w600)))]),
+           const SizedBox(height:6),
+           const Text('Windows capture identified TCP 4660 and an UNT\$ packet signature. Check whether the hub accepts a passive connection. This does not send discovery commands or claim any USB socket.'),
+           OutlinedButton.icon(
+             onPressed:vendorProbeRunning?null:inspectNuVendor,
+             icon:const Icon(Icons.network_check),
+             label:Text(vendorProbeRunning?'Observing...':'Observe vendor USB service')),
+           if(vendorUsbDiagnostic!=null)
+             ListTile(
+               leading:Icon(vendorUsbDiagnostic!.connected
+                 ? Icons.link:Icons.link_off),
+               title:Text(vendorUsbDiagnostic!.connected
+                 ? 'TCP 4660 reachable':'TCP 4660 unavailable'),
+               subtitle:Text(vendorUsbDiagnostic!.detail),
+             ),
+           const Text('Native vendor USB attach, port enumeration and USB transfers still require decoding a capture of Windows Search → Connect → Disconnect.',
              style:TextStyle(fontSize:12)),
          ]))),
        const SizedBox(height:12),
