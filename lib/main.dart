@@ -91,12 +91,10 @@ class _HomeState extends State<Home> {
  }
  Future<void> pick() async {
    try{
-     final result=await FilePicker.platform.pickFiles(type:FileType.custom,
-       allowedExtensions:['pdf','jpg','jpeg','png','txt'],withData:true);
-     if(result==null)return;
-     final f=result.files.first;
-     final bytes=f.bytes??(f.path!=null?await File(f.path!).readAsBytes():null);
-     if(bytes==null)throw Exception('Cannot read file');
+     final f=await FilePicker.pickFile(type:FileType.custom,
+       allowedExtensions:['pdf','jpg','jpeg','png','txt']);
+     if(f==null)return;
+     final bytes=await f.readAsBytes();
      final ext=f.extension?.toLowerCase();
      if(ext=='pdf'){pdfBytes=bytes;}else{
        final doc=pw.Document();

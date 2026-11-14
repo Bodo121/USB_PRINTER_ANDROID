@@ -32,6 +32,8 @@ jobs:
           dst.mkdir(parents=True,exist_ok=True)
           shutil.copyfile(root/'assets'/'ivec_models.json',dst/'ivec_models.json')
           PY
+      - name: Enable Android built-in Kotlin
+        run: echo 'android.builtInKotlin=true' >> android/gradle.properties
       - name: Enable Android network discovery
         run: |
           python3 - <<'PY'
