@@ -1,6 +1,6 @@
-# DigitusPrint v0.5 — Android native hub discovery and Canon test printing
+# DigitusPrint — Canon G2420 / DIGITUS DA-70251
 
-Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-70254** network USB hub. The user-selected printer remains G2420 regardless of the name reported by the USB hub.
+Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-70251** network USB hub. The user-selected printer remains G2420 regardless of the name reported by the USB hub.
 
 ## Hub discovery and first-run experience
 
@@ -66,9 +66,13 @@ RFC 1179 specifies the client-side source TCP port range 721–731, while Androi
 - GitHub Actions can publish an update APK to the public release feed when *all four* stable signing secrets are present: `ANDROID_RELEASE_KEYSTORE_B64`, `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS`, and `ANDROID_RELEASE_KEY_PASSWORD`. Never commit the keystore or signing passwords.
 - **Important migration:** previous CI debug APKs use ephemeral signing certificates. Android cannot update those in place with a differently signed release APK. Make a backup and uninstall the old prototype once before installing the first properly signed release; later updates work in place as long as the release key never changes.
 - New installations must enable **Install unknown apps** for DigitusPrint through Android settings. Updates prompt for explicit Android approval.
-- TCP `9100` was added to the default read-only network port checks. An open port does not prove that the DA-70254 forwards printer data. The app intentionally **does not** blast raster data to an unverified raw socket.
+- TCP `9100` was added to the default read-only network port checks. An open port does not prove that the DA-70251 forwards printer data. The app intentionally **does not** blast raster data to an unverified raw socket.
 - The existing **Data First** switch remains a manual, single-job diagnostic. Neither this change nor the updater tests the printer physically.
 
 ## v0.8.1 vendor USB-over-IP research track
 
 DigitusPrint now also includes a passive native-Dart probe for the Windows NU V1.25 **TCP 4660** service, plus a unit-tested `UNT$` fingerprint recognizer based on the real uploaded packet capture. The probe connects briefly and listens without sending *any* client handshake or USB commands. It can report TCP reachability or a spontaneous server greeting, but **it cannot claim a USB port or print**. Those operations require confirmed vendor opcodes and framing from a capture starting *before* Windows utility Search/Connect/Disconnect. The app continues to support the separate LPR track. No Windows installer or binary is bundled.
+
+## Confirmed physical hub model
+
+The owner confirmed the physical device is **DIGITUS DA-70251**, not DA-70254. Its official manual primarily documents the USB Server utility's virtual USB connections and per-port connection control. LPR probing remains an experimental compatibility track only; LPR instructions specific to DA-70254 do not prove DA-70251 support. Vendor TCP 4660 remains partially identified from the user's own network trace, but no verified device-claim/USB bulk protocol exists yet.

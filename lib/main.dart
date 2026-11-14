@@ -238,7 +238,7 @@ class _HomeState extends State<Home> {
          ? 'No LPR servers found. Check hub power and Wi-Fi.'
          : hubInfo!=null
            ? 'USB hub identified. Select a verified candidate queue if available.'
-           : 'Found LPR endpoints, but none verified as the DIGITUS hub.';
+           : 'Found LPR endpoints, but none verified as the DIGITUS DA-70251 hub.';
        progress=1;
      });
    }catch(e){
@@ -464,7 +464,7 @@ class _HomeState extends State<Home> {
            Expanded(child:Text('Canon PIXMA G2420',style:TextStyle(fontSize:20,fontWeight:FontWeight.w600)))]),
          const SizedBox(height:12),
          Text(hubInfo?.connectivityLabel??'Hub not identified yet'),
-         Text('DIGITUS · ${ip.text.isEmpty?'Not configured':ip.text}',style:style.bodySmall),
+         Text('DIGITUS DA-70251 · ${ip.text.isEmpty?'Not configured':ip.text}',style:style.bodySmall),
          const SizedBox(height:4),
          Text('Print path: unverified · Queue: ${queue.text.isEmpty?'Not found':queue.text}',style:style.bodySmall),
          if(hubInfo!=null)Text('Hub firmware: ${hubInfo!.firmware??'Unknown'} · USB: ${hubInfo!.deviceStatus??'Unknown'}',style:style.bodySmall),
@@ -503,7 +503,7 @@ class _HomeState extends State<Home> {
            const Text('USB hub connection diagnostics',
              style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
            const SizedBox(height:8),
-           const Text('The DIGITUS hub has four physical USB sockets. TCP service ports (4660 / 3240 / 515) are network endpoints, not physical USB socket numbers.'),
+           const Text('The DIGITUS DA-70251 hub has four physical USB sockets. TCP service ports (4660 / 3240 / 515) are network endpoints, not physical USB socket numbers.'),
            const SizedBox(height:8),
            const Text('Physical USB socket (informational until vendor protocol is decoded)'),
            DropdownButton<int>(
@@ -604,7 +604,7 @@ class _HomeState extends State<Home> {
      ]else if(tab==1)...[
        Text('Print a document',style:style.headlineMedium),
        Card.filled(child:ListTile(leading:const Icon(Icons.print),title:const Text('Canon PIXMA G2420'),
-          subtitle:Text('DIGITUS · ${ip.text.isEmpty?'Not connected':ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'))),
+          subtitle:Text('DIGITUS DA-70251 · ${ip.text.isEmpty?'Not connected':ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'))),
        const Text('PDF, PNG, JPEG, TXT'),
        const SizedBox(height:16),
        FilledButton.icon(onPressed:pick,icon:const Icon(Icons.folder_open),label:const Text('Choose file')),

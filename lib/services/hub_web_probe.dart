@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-/// A read-only snapshot of the DA-70254's built-in HTTP information pages.
+/// A read-only snapshot of the DA-70251's built-in HTTP information pages.
 ///
 /// The USB server can report a device "Ready" even if the Canon driver or
 /// LPR queue is not compatible. Never equate web status with printed output.

@@ -1,13 +1,13 @@
 # NU V1.25 protocol research — DigitusPrint v0.6
 
-The user's Windows utility **Networking USB Server NU V1.25** detects a USB printer attached to a DIGITUS DA-70254 / "IP USB Sharing Station" hub. The printer the user wishes to support is **Canon PIXMA G2420**, regardless of older product text shown in the hub status page.
+The user's Windows utility **Networking USB Server NU V1.25** detects a USB printer attached to a DIGITUS DA-70251 / "IP USB Sharing Station" hub. The printer the user wishes to support is **Canon PIXMA G2420**, regardless of older product text shown in the hub status page.
 
 Source: https://archive.org/details/nu-v-1.25 . This archive is a Windows installation CD, not an open protocol specification. The ISO **could not be downloaded into this analysis environment**, so the executable has **not** been disassembled or verified. The manufacturer's manual describes an "USB over IP Server" client that can connect remote USB devices, and separately describes LPR printing.
 
 ## Implemented, read-only
 
 - The Android app can identify the USB sharing hub via its HTTP status page and probe candidate LPR queues.
-- The v0.6 diagnostics probe **standard Linux USB/IP** TCP/3240 using OP_REQ_DEVLIST, and parse OP_REP_DEVLIST. This is **only one hypothesis**. Nothing establishes that NU V1.25 or DA-70254 speaks this standard; a negative result is expected for many proprietary USB sharing servers.
+- The v0.6 diagnostics probe **standard Linux USB/IP** TCP/3240 using OP_REQ_DEVLIST, and parse OP_REP_DEVLIST. This is **only one hypothesis**. Nothing establishes that NU V1.25 or DA-70251 speaks this standard; a negative result is expected for many proprietary USB sharing servers.
 - This diagnostic never issues USB/IP OP_REQ_IMPORT, never connects to USB endpoints, and never sends data to the printer.
 - Android remains native: Flutter UI with Dart network discovery and Kotlin Canon IVEC raster output.
 
@@ -35,7 +35,7 @@ Do **not** assume this is Linux USB/IP, blindly send USB URBs to unverified devi
 
 - https://archive.org/details/nu-v-1.25
 - https://www.kernel.org/doc/html/v5.18/usb/usbip_protocol.html
-- https://ftp.assmann.com/pub/DA-/DA-70254___4016032390091/DA-70254_manual_English_20170126.pdf
+- https://ftp.assmann.com/pub/DA-/DA-70251___4016032390091/DA-70251_manual_English_20170126.pdf
 
 ## Findings from user capture `printer.pcapng` (2026-11-14)
 
@@ -77,8 +77,12 @@ The nested setup packages identify themselves as **InstallShield**. Their large 
 
 **Release-note evidence:** `SoftwareReleaseNote_0917_0049rev2_20110110.txt` describes GUI version `10_0917_0049rev2` dated 2011-01-10 and specifically fixes a bug causing an incorrect **printer queue name in the Device Properties dialog**. An earlier release `10_0917_0049` dated 2010-12-06 also fixes the incorrect Printer/MFP queue-name display. This strongly supports retaining the Windows utility's queue-identification function as a baseline, but doesn't specify how that value is calculated.
 
-The release notes specifically refer to **E1868, E2868 and E3868 driver families**. Similar commercial products document an **Elite Silicon E3868M1** chipset, but the actual DIGITUS DA-70254's chipset **has not been verified from this ZIP**. The candidate silicon family should guide research, not be coded as fact.
+The release notes specifically refer to **E1868, E2868 and E3868 driver families**. Similar commercial products document an **Elite Silicon E3868M1** chipset, but the actual DIGITUS DA-70251's chipset **has not been verified from this ZIP**. The candidate silicon family should guide research, not be coded as fact.
 
 **Current limitations:** The packet capture from the user contains established TCP/4660 `UNT$` client data but lacks session setup and server-side payload. The Windows installers contain the implementation, but the nested InstallShield payload has not yet been fully extracted or reverse engineered. Consequently a functioning native vendor attach / USB transfer engine **cannot responsibly be implemented from the present evidence alone**.
 
 Next local step: inspect the installed program's actual files (after Windows installation, copy the program folder and relevant driver DLLs/SYS files; do not include unrelated private documents), or provide a capture that starts *before* the Windows utility's first connection. Look for the client packet that requests the device list, and the server's corresponding response. Native Android code must remain separate, with no Windows executable in the APK.
+
+## Hardware model correction
+
+Owner confirmed **DA-70251**. Refer to its own official manual: https://ftp.assmann.com/pub/DA-/DA-70251___4016032329916/ . This device supports a virtual USB server client and per-physical-port automatic connections. Do not infer its chipset or its LPR behavior from the DA-70254 manual. The observation of TCP 4660 in the uploaded capture remains valid for the *owner's actual hub*, regardless of the previous model label.
