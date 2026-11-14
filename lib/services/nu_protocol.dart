@@ -95,6 +95,7 @@ class NuPending {
 class NuPendingReplies {
   final _pending=<int,NuPending>{};
   bool get isEmpty=>_pending.isEmpty;
+  bool get hasDataPending=>_pending.values.any((p)=>p.command!=8);
   int get length=>_pending.length;
   Iterable<NuPending> get values=>_pending.values;
   NuPending? get oldest {
