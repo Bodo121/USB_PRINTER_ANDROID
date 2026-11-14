@@ -27,3 +27,13 @@ sender has been removed from the native Kotlin printer implementation.
 The experimental sender does not support resume or automatic retry.
 A complete successful Windows test-page PCAP remains important to
 verify the final NU framing and transfer-completion semantics.
+
+## v0.9.3 trace export
+
+The Print tab includes Copy full NU TX/RX debug log after an attempt.
+It includes message type, full 16-bit sequence, size, and the first 48
+raw bytes for each TX and RX record. RX data may expose 16 bytes of
+printer status content; review before sharing. No automatic retry or
+resumption is attempted. A matching transport reply does not prove a
+page printed. The G2020-family raster profile is not yet proven for the
+reported G2010 series device.
