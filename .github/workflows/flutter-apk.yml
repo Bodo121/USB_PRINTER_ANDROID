@@ -41,6 +41,7 @@ jobs:
           p=Path('android/app/src/main/AndroidManifest.xml')
           s=p.read_text()
           s=s.replace('<application', '<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <application',1)
+          s=s.replace('<application', '<application android:usesCleartextTraffic="true"',1)
           p.write_text(s)
           PY
       - name: Resolve dependencies
