@@ -33,3 +33,47 @@ reproducible page-printing transport.
 `NuBulkDecoder` now inspects captured request/completion metadata and
 checks correlation. It deliberately does not transmit bulk packets or
 equate a matching reply with printed output.
+
+## Corrected analysis after Android v0.9.3 timeout (2026-11-14)
+
+The original user's 6.3 MiB `plm222.pcapng` was reassembled in both
+TCP directions, removing retransmitted segments. It contains **3,144**
+client 1460-byte records after greeting and **3,163** hub replies.
+
+An important correction: the byte `0x81` at client-record offset 32
+is a **logical NU pipe identifier**, not something Android may replace
+with the USB configuration descriptor's physical printer bulk IN
+endpoint `0x82`. The first Windows 02/04 reads (sequences 42–44)
+all use logical pipe `0x81`, and the final request bytes 44–47
+are `00 12 82 24`. Android v0.9.3 incorrectly sent `0x82`
+and `00 12 72 20`. Its seq42–44 reads all returned zero bytes.
+
+The Windows reference initial transactions, *header metadata only*:
+
+| Seq | Request | Declared bytes | NU pipe | Reply body |
+| --- | --- | ---: | --- | ---: |
+| 40 | 02/08 preparation | 64 | 0x01 | 32 |
+| 41 | 02/02 write | 383 | 0x01 | 0 |
+| 42 | 02/04 read | 1024 | 0x81 | 0 |
+| 43 | 02/04 read | 1024 | 0x81 | 0 |
+| 44 | 02/04 read | 1024 | 0x81 | 487 |
+| 45 | 02/02 write | 16 | 0x01 | 0 |
+| 46 | 02/04 read | 512 | 0x81 | 0 |
+| 47 | 02/04 read | 512 | 0x81 | 24 |
+| 48–50 | 02/02 writes | 4 each | 0x81 | 0 |
+| 51 | 02/00 control | 8 | 0x01 | 140 |
+
+Later there are vendor logical-pipe `0x81` writes, some 8192-byte
+IN requests, additional control transfers and another preparation at
+sequence 75. The bytes and statuses need decoding; it is **wrong**
+to equate every 02/02 opcode with a physical printer endpoint-01
+raster write. In particular the prior Android sequence 45 sent
+1024 raster bytes to pipe 0x01, where Windows sent just 16 bytes.
+
+v0.9.4 matches the first five captured NU headers and limits live
+experimentation to sequences 40–44. It logs the read sizes and stops
+before the proprietary 16-byte and 4-byte device exchanges that cannot
+be generated from an arbitrary IVEC raster. This is a **handshake
+diagnostic, not a print-job sender**. No retry is attempted on failure.
+Tests use 50 actual capture metadata records without storing private
+printer body or Windows binaries.
