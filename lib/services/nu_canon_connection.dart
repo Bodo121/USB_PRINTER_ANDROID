@@ -36,7 +36,11 @@ class NuCanonConnection {
       _signal=ready;
       // Register signal only after testing current buffer to avoid races.
       if(_incoming.length>=length)break;
-      await ready.future.timeout(deadline.difference(DateTime.now()));
+      final remaining=deadline.difference(DateTime.now());
+      if(remaining<=Duration.zero){
+        throw TimeoutException('NU response timed out');
+      }
+      await ready.future.timeout(remaining);
     }
     _signal=null;
     final all=_incoming.takeBytes();
@@ -107,8 +111,14 @@ class NuCanonConnection {
       socket.setOption(SocketOption.tcpNoDelay,true);
       _ended=false;
       _subscription=socket.listen(_receive,
-        onError:(Object _){_ended=true;_signal?.complete();},
-        onDone:(){_ended=true;_signal?.complete();});
+        onError:(Object _){
+          _ended=true;
+          if(_signal!=null&&!_signal!.isCompleted)_signal!.complete();
+        },
+        onDone:(){
+          _ended=true;
+          if(_signal!=null&&!_signal!.isCompleted)_signal!.complete();
+        });
       socket.add(NuHello.make(candidates.first));
       await socket.flush();
       final hello=await _readExact(100,const Duration(seconds:4));
