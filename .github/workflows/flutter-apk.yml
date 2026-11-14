@@ -65,7 +65,7 @@ jobs:
       - name: Analyze Dart source
         run: flutter analyze --no-fatal-infos lib
       - name: Run discovery unit tests
-        run: flutter test test/hub_probe_test.dart test/usbip_discovery_test.dart test/usb_port_diagnostics_test.dart test/vendor_usb_discovery_test.dart test/dcp_discovery_test.dart test/nu_session_test.dart
+        run: flutter test test/hub_probe_test.dart test/usbip_discovery_test.dart test/usb_port_diagnostics_test.dart test/vendor_usb_discovery_test.dart test/dcp_discovery_test.dart test/nu_frame_decoder_test.dart test/nu_session_test.dart
       - name: Build debug APK
         run: flutter build apk --debug
       - uses: actions/upload-artifact@v4
