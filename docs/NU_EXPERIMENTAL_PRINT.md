@@ -37,3 +37,17 @@ printer status content; review before sharing. No automatic retry or
 resumption is attempted. A matching transport reply does not prove a
 page printed. The G2020-family raster profile is not yet proven for the
 reported G2010 series device.
+
+## v0.9.4: capture-matched diagnostic, deliberately no full print
+
+The previous v0.9.3 sent IN requests on `0x82` rather than the
+Windows client's logical NU pipe `0x81`; it also sent 1024 bytes
+at seq45 where Windows sent only 16. The old sender is not a validated
+printing implementation.
+
+The new user-facing button runs a limited, opt-in handshake probe:
+preparation seq40; 383-byte write seq41; three 1024-byte reads seq42–44
+using the Windows header `00 12 82 24`. If all reads are empty, stop
+and record the entire TX/RX header trace. If any read contains data,
+report a successful *probe*, but do not send seq45 or a complete print
+job. Printer output and IVEC model compatibility remain unverified.
