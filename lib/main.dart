@@ -742,6 +742,18 @@ class _HomeState extends State<Home> {
        const Text('Requires Connect and verify Canon USB, then Read Canon '
          'printer-class ID on the Discover tab. USB completion does not '
          'prove a page printed. Never automatically retry.'),
+       if(nuConnection.printTrace.isNotEmpty)
+         OutlinedButton.icon(
+           onPressed:() async {
+             await Clipboard.setData(ClipboardData(text:nuConnection.printTrace));
+             if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(content:Text('Complete NU TX/RX trace copied. '
+                 'Review before sharing: RX may include printer status data.')));
+           },
+           icon:const Icon(Icons.copy_all),
+           label:const Text('Copy full NU TX/RX debug log')),
+       const Text('Protocol still experimental. The G2010 USB identity does '
+         'not validate the bundled G2020-family raster profile.'),
 
      ]else...[
        Text('Activity history',style:style.headlineMedium),
