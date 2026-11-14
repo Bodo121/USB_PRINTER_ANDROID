@@ -38,6 +38,10 @@ class NuPrintAudit {
           windowsSecondSetupStart,
       'Windows seq44 returned 487 bytes after setup, whereas Android'
           ' using direct IVEC raster returned zero bytes.',
+      'NUServer64.sys legacy OUT forwards the USB client buffer'
+          ' in at most 1024-byte fragments with a 32-byte NU header.',
+      'Windows seq41 is upper-layer USB client data, not proven'
+          ' to be DIGITUS authentication or encryption.',
       'Mismatch: the generated document stream cannot be substituted'
           ' for this unidentified USB setup exchange.',
       'No physical printing attempted. Protocol setup/response processing'
