@@ -3,6 +3,24 @@
 Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-70251** network USB hub. The user-selected printer remains G2420 regardless of the name reported by the USB hub.
 
 
+
+## Capture-verified NU handshake probe — v0.9.4 (2026-11-14)
+
+The v0.9.3 print test stalled after its first 383-byte OUT:
+its 02/04 reads targeted logical pipe `0x82`, but the original
+Windows NU capture requires logical pipe `0x81`, with header tail
+`00 12 82 24`. Windows also sends a 16-byte OUT at seq45, not
+the 1024-byte write the app tried.
+
+v0.9.4 now matches the first five captured client headers (seq40–44)
+and stops before the next proprietary messages. The button is labeled
+**Run NU handshake probe (not full printing)**, preserves opt-in
+consent and no-retry semantics, and exports full TX/RX metadata.
+**It does not print a full page.** The remaining vendor communication
+and G2010/G2020 raster compatibility must be decoded and verified.
+The older experimental full-job v0.9.3 description below is retained
+only as historical context.
+
 ## Current native NU experiment — v0.9.3 (2026-11-14)
 
 The Print > Test 1-page NU printing button uses proprietary NU TCP/4660
