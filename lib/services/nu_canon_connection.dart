@@ -245,7 +245,9 @@ class NuCanonConnection {
     if(NuWire.txSequence(frame)!=sequence){
       throw StateError('NU TX sequence encoding mismatch');
     }
-    pending.add(command,sequence,count);
+    pending.add(command,sequence,count,
+      timeout:command==8?const Duration(seconds:30):
+        const Duration(seconds:12));
     _logPrint('TX 02/'+command.toRadixString(16).padLeft(2,'0')+
       ' seq='+sequence.toString()+' count='+count.toString()+
       ' HEX48='+NuWire.hex(frame));
@@ -257,7 +259,9 @@ class NuCanonConnection {
   /// the 02/09 prep response can arrive after later 02/03/02/05 replies.
   Future<int> _drainTracked(NuPendingReplies pending) async {
     var completedOut=0;
-    while(!pending.isEmpty) {
+    // Do not block on 02/09 alone: Windows receives prep40 after
+    // OUT and IN replies for sequences 41-50.
+    while(pending.hasDataPending) {
       final oldest=pending.oldest!;
       final remaining=oldest.deadline.difference(DateTime.now());
       if(remaining<=Duration.zero) {
@@ -317,7 +321,7 @@ class NuCanonConnection {
       ' OUT=0x01 IN=0x'+inEndpoint.toRadixString(16)+
       ' G2020-family IVEC encoder experimental; NO RETRIES');
     try {
-      var pending=NuPendingReplies();
+      final pending=NuPendingReplies();
       await _sendTracked(NuWire.prepare(sequence:seq),
         8,seq++,64,pending);
       final initial=raster.length<383?raster.length:383;
@@ -334,7 +338,7 @@ class NuCanonConnection {
       // Bounded pipeline: no more than 2 OUTs and 2 INs in flight.
       // This is deliberately conservative compared to the Windows client.
       while(sentBytes<raster.length) {
-        pending=NuPendingReplies();
+        // Keep the original seq40 preparation outstanding across windows.
         for(var i=0;i<2&&sentBytes<raster.length;i++) {
           final remain=raster.length-sentBytes;
           final count=remain<1024?remain:1024;
@@ -348,6 +352,11 @@ class NuCanonConnection {
             4,seq++,1024,pending);
         }
         matchedBytes+=await _drainTracked(pending);
+      }
+      if(!pending.isEmpty) {
+        _logPrint('NOTE '+pending.length.toString()+
+          ' NU prep replies still outstanding after final OUT; '+
+          'do not assume USB setup completed');
       }
       _logPrint('END matching NU bulk OUT replies for '+
         matchedBytes.toString()+' bytes; PHYSICAL PRINT UNVERIFIED');
