@@ -2,6 +2,27 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:digitus_print/services/nu_canon_connection.dart';
 void main(){
+  test('captured 02/03 bulk completion matches transfer 0x29',(){
+    final response=Uint8List.fromList(<int>[
+      85,78,84,36,0,0,2,3,0x29,0,0,0,0,0,1,1,
+      0x08,0x02,0x32,0xff,0x7f,0x01,0xe5,0x17,
+      0,0,0x80,0x29,0,0x12,0x72,0x22
+    ]);
+    expect(NuCanonConnection.isBulkOutCompletion(response,
+      sequence:0x29,count:383),isTrue);
+    expect(NuCanonConnection.isBulkOutCompletion(response,
+      sequence:0x2a,count:383),isFalse);
+    expect(NuCanonConnection.isBulkOutCompletion(response,
+      sequence:0x29,count:382),isFalse);
+  });
+  test('delayed preparation 02/09 is a separate response frame',(){
+    final response=Uint8List(64);
+    response.setAll(0,<int>[85,78,84,36,0,32,2,9,0x28]);
+    expect(NuCanonConnection.isBulkPreparationResponse(response),isTrue);
+    expect(NuCanonConnection.isBulkOutCompletion(response,
+      sequence:0x29,count:383),isFalse);
+  });
+
   test('NU 02/08 setup is 1460 bytes; validates 02/09 reply',(){
     final request=NuCanonConnection.capturedBulkPreparationRequest();
     expect(request.length,1460);

@@ -232,6 +232,73 @@ class NuCanonConnection {
       reply[4]==0 && reply[5]==0x20 &&
       reply[6]==2 && reply[7]==9 && reply[8]==0x28;
 
+  /// NU records travel over TCP, so reads may return partial or multiple
+  /// frames. A response record begins with the 32-byte NU header; the
+  /// big-endian 16-bit size at offset 4 is the number of body bytes.
+  Future<Uint8List> _readNuResponse(Duration timeout) async {
+    final header=await _readExact(32,timeout);
+    if(header[0]!=0x55||header[1]!=0x4e||
+       header[2]!=0x54||header[3]!=0x24){
+      throw const FormatException('NU response magic mismatch');
+    }
+    final bodyLength=(header[4]<<8)|header[5];
+    if(bodyLength>4096) {
+      throw FormatException('NU response body too large: $bodyLength');
+    }
+    if(bodyLength==0)return header;
+    final body=await _readExact(bodyLength,timeout);
+    return Uint8List.fromList([...header,...body]);
+  }
+
+  /// Windows sends 02/08 before 02/02, but the hub replies 02/03
+  /// before its delayed 02/09. Validate the *requested* transaction ID
+  /// rather than assuming all replies arrive in request order.
+  static bool isBulkOutCompletion(Uint8List reply,{
+    required int sequence,required int count,
+  }) => reply.length==32 &&
+       reply[0]==0x55 && reply[1]==0x4e &&
+       reply[2]==0x54 && reply[3]==0x24 &&
+       reply[4]==0 && reply[5]==0 &&
+       reply[6]==2 && reply[7]==3 &&
+       reply[8]==sequence && reply[26]==0x80 &&
+       reply[27]==sequence &&
+       reply[20]==(count&255) && reply[21]==(count>>8);
+
+  Future<bool> _awaitBulkOutCompletion({
+    required int sequence,required int count,
+    required int completedBefore,
+    required bool preparationObserved,
+  }) async {
+    final deadline=DateTime.now().add(const Duration(seconds:8));
+    var prepared=preparationObserved;
+    for(var frames=0;frames<8;frames++){
+      final remaining=deadline.difference(DateTime.now());
+      if(remaining<=Duration.zero)break;
+      Uint8List response;
+      try {
+        response=await _readNuResponse(remaining);
+      } on TimeoutException {
+        break;
+      }
+      if(isBulkPreparationResponse(response)){
+        prepared=true;
+        continue;
+      }
+      if(isBulkOutCompletion(response,sequence:sequence,count:count)){
+        return prepared;
+      }
+      throw FormatException(
+        'Unexpected NU reply type ${response.length>=8?response[7]:-1} '
+        'seq ${response.length>=9?response[8]:-1} while awaiting '
+        'bulk OUT 02/03 seq $sequence; $completedBefore bytes '
+        'previously acknowledged. Print delivery uncertain, no retry.');
+    }
+    throw TimeoutException('NU bulk OUT 02/03 timeout for seq $sequence '
+      'after $completedBefore bytes acknowledged; '
+      'preparation 02/09 ${prepared?'seen':'not yet seen'}. '
+      'Print delivery uncertain, no retry.');
+  }
+
   /// Experimental bulk-OUT sender. The 383-byte Windows request is the
   /// only observed nonempty OUT shape; it is NOT proven to generalize to
   /// arbitrary IVEC jobs. This is explicitly opt-in and never auto-retries.
@@ -248,19 +315,12 @@ class NuCanonConnection {
     _printing=true;
     var completed=0;
     try {
-      // One bounded transfer at a time. The NU 02/02 command and 02/03
-      // completion are observed in Windows traffic, but dynamic length
-      // and payload-offset semantics remain experimental.
-      // Mirror Windows' initial printer-endpoint setup. If the hub does not
-      // answer, stop before sending any Canon print bytes.
+      // Captured Windows order: 02/08 preparation, then 02/02 bulk OUT,
+      // then 02/03 completion, while 02/09 preparation may arrive later.
+      // Waiting for 02/09 before writing caused an 8s deadlock.
       _socket!.add(capturedBulkPreparationRequest());
       await _socket!.flush();
-      final preparation=await _readExact(64,const Duration(seconds:8));
-      if(!isBulkPreparationResponse(preparation)){
-        throw const FormatException(
-          'NU printer bulk preparation was not acknowledged; '
-          'no raw raster bytes sent');
-      }
+      var preparationSeen=false;
       var seq=0x29;
       while(completed<raster.length){
         final count=(raster.length-completed).clamp(0,383);
@@ -270,15 +330,9 @@ class NuCanonConnection {
         final socket=_socket!;
         socket.add(frame);
         await socket.flush();
-        final response=await _readExact(32,const Duration(seconds:8));
-        if(response[0]!=85||response[1]!=78||response[2]!=84||
-           response[3]!=36||response[6]!=2||response[7]!=3||
-           response[8]!=seq||response[26]!=0x80||response[27]!=seq||
-           response[20]!=(count&255)||response[21]!=(count>>8)) {
-          throw FormatException(
-            'NU bulk OUT completion mismatch after $completed bytes; '
-            'delivery uncertain, no retry');
-        }
+        preparationSeen=await _awaitBulkOutCompletion(
+          sequence:seq,count:count,completedBefore:completed,
+          preparationObserved:preparationSeen);
         completed+=count;
         seq=(seq+1)&255;
       }
