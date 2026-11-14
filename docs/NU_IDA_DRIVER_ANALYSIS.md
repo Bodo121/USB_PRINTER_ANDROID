@@ -2,7 +2,7 @@
 
 ## Evidence
 
-Examined the user's original forpgpete(1).zip, specifically
+Examined the user's original forgpete(1).zip, specifically
 Driver/NUServer64.sys, using x64 objdump and an independent Python
 PE parser. The original archive is not redistributed in this repo.
 
@@ -41,7 +41,7 @@ the client USB transfer length and offset. Its relevant instructions:
     RVA C64C: mov eax, 0x400       ; 1024 bytes
     RVA C651: cmp esi, eax
     RVA C653: cmova esi, eax       ; fragment <= 1024
-    RVA C658: add rdx, 0x20        ; allocate length + 32
+    RVA C658: lea rdx, [rsi+0x20] ; allocate length + 32
     RVA C67B: lea rcx, [rax+0x20] ; buffer payload after header
     RVA C68A: call 0x1D9B0        ; transfer-buffer copying helper
     RVA C6B0: call 0xF05C         ; header builder
