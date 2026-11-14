@@ -5,6 +5,7 @@ import 'services/vendor_usb_discovery.dart';
 import 'services/dcp_discovery.dart';
 import 'services/nu_session.dart';
 import 'services/nu_canon_connection.dart';
+import 'services/windows_print_bridge.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 
@@ -36,9 +37,15 @@ class Home extends StatefulWidget {
 }
 class _HomeState extends State<Home> {
  final ip=TextEditingController(),
-   servicePorts=TextEditingController(text:'4660');
+   servicePorts=TextEditingController(text:'4660'),
+   bridgeHost=TextEditingController(),
+   bridgePort=TextEditingController(text:'8765'),
+   bridgeToken=TextEditingController();
  int selectedUsbSocket=1;
  bool probingServices=false;
+ bool bridgeBusy=false, bridgeNeedsReview=false;
+ String bridgeMessage='Windows bridge not checked';
+ String? bridgeLastJobId;
  bool checkingUpdate=false,downloadingUpdate=false,updateDownloaded=false;
  String updateMessage='';
  Map<String,dynamic>? availableUpdate;
@@ -68,6 +75,11 @@ class _HomeState extends State<Home> {
    setState((){
      ip.text=prefs.getString('ip')??'192.168.0.74';
      servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660';
+     bridgeHost.text=prefs.getString('bridgeHost')??'';
+     bridgePort.text=prefs.getString('bridgePort')??'8765';
+     bridgeToken.text=prefs.getString('bridgeToken')??'';
+     bridgeLastJobId=prefs.getString('bridgeLastJobId');
+     bridgeNeedsReview=prefs.getBool('bridgeNeedsReview')??false;
      selectedUsbSocket=(prefs.getInt('usbSocket')??1).clamp(1,4);
      history=prefs.getStringList('history')??[];
    });
@@ -380,6 +392,109 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>message='Unable to prepare test page: $e');
    }
  }
+
+ WindowsPrintBridge _windowsBridge(){
+   final port=int.tryParse(bridgePort.text.trim());
+   if(port==null || port<1 || port>65535){
+     throw const FormatException('Bridge port must be between 1 and 65535');
+   }
+   return WindowsPrintBridge(host:bridgeHost.text.trim(),
+       port:port,token:bridgeToken.text.trim());
+ }
+ Future<void> _saveBridgeSettings() async{
+   final p=await SharedPreferences.getInstance();
+   await p.setString('bridgeHost',bridgeHost.text.trim());
+   await p.setString('bridgePort',bridgePort.text.trim());
+   // Saved only to this app's private preferences; local HTTP is NOT TLS.
+   await p.setString('bridgeToken',bridgeToken.text.trim());
+ }
+ Future<void> checkWindowsBridge() async{
+   if(bridgeBusy)return;
+   setState((){bridgeBusy=true;bridgeMessage='Contacting Windows PC...';});
+   try{
+     final bridge=_windowsBridge();
+     await _saveBridgeSettings();
+     final health=await bridge.check();
+     if(mounted)setState(()=>bridgeMessage=health.ready
+       ?'Windows bridge ready: '+health.printer+
+          '. This submits to Windows, not confirmed on paper.'
+       :'Windows bridge responds but SumatraPDF is not ready. '+health.note);
+   }catch(e){
+     if(mounted)setState(()=>bridgeMessage='Windows bridge check failed: '+e.toString());
+   }finally{if(mounted)setState(()=>bridgeBusy=false);}
+ }
+ Future<void> sendViaWindowsBridge() async{
+   if(bridgeBusy||pdfBytes==null||bridgeNeedsReview)return;
+   setState((){bridgeBusy=true;bridgeMessage='Checking Windows print bridge...';});
+   try{
+     final bridge=_windowsBridge();
+     await _saveBridgeSettings();
+     final h=await bridge.check();
+     if(!h.ready)throw StateError('Windows PC print bridge is not ready: '+h.note);
+     final id=WindowsPrintBridge.newJobId();
+     // Persist before posting so a lost response never triggers a new ID retry.
+     final prefs=await SharedPreferences.getInstance();
+     await prefs.setString('bridgeLastJobId',id);
+     await prefs.setBool('bridgeNeedsReview',true);
+     bridgeLastJobId=id;
+     bridgeNeedsReview=true;
+     if(mounted)setState(()=>bridgeMessage='Uploading PDF to '+h.printer+
+       ' on your Windows PC; no automatic retry...');
+     final result=await bridge.submit(pdfBytes!,id);
+     if(mounted)setState(()=>bridgeMessage='Windows job '+id.substring(0,8)+
+       ': '+result.state+'; '+result.message);
+     history.insert(0,DateTime.now().toLocal().toString().substring(0,16)+
+       ' · Windows bridge accepted PDF: job '+id.substring(0,8));
+     history=history.take(20).toList();
+     await prefs.setStringList('history',history);
+     for(var n=0;n<12;n++){
+       final poll=await bridge.status(id);
+       if(mounted)setState(()=>bridgeMessage='Windows job '+
+         id.substring(0,8)+': '+poll.state+'; '+poll.message);
+       if(poll.finished){
+         // Even a successful spooler submission cannot verify paper output.
+         if(poll.state=='submitted'||poll.state=='failed'){
+           bridgeNeedsReview=false;
+           await prefs.setBool('bridgeNeedsReview',false);
+         }
+         return;
+       }
+       await Future<void>.delayed(const Duration(seconds:2));
+     }
+     if(mounted)setState(()=>bridgeMessage='Windows job is still queued. '
+       'Use Check last job. Do not send it again blindly.');
+   }catch(e){
+     if(mounted)setState(()=>bridgeMessage='Delivery may be uncertain: '+
+       e.toString()+'. Use Check last job, never blindly retry.');
+   }finally{if(mounted)setState(()=>bridgeBusy=false);}
+ }
+ Future<void> checkWindowsJob() async{
+   final id=bridgeLastJobId;
+   if(id==null||bridgeBusy)return;
+   setState((){bridgeBusy=true;bridgeMessage='Checking last Windows job...';});
+   try{
+     final result=await _windowsBridge().status(id);
+     if(mounted)setState(()=>bridgeMessage='Windows job '+
+       id.substring(0,8)+': '+result.state+'; '+result.message);
+     if(result.state=='submitted'||result.state=='failed'){
+       bridgeNeedsReview=false;
+       final prefs=await SharedPreferences.getInstance();
+       await prefs.setBool('bridgeNeedsReview',false);
+     }
+   }catch(e){if(mounted)setState(()=>bridgeMessage='Cannot verify last job: '+
+     e.toString()+'. Check Windows and printer before any new job.');}
+   finally{if(mounted)setState(()=>bridgeBusy=false);}
+ }
+ Future<void> clearWindowsReview() async{
+   final p=await SharedPreferences.getInstance();
+   await p.setBool('bridgeNeedsReview',false);
+   if(mounted)setState((){
+     bridgeNeedsReview=false;
+     bridgeMessage='Review cleared manually. Confirm paper output or '
+       'Windows print queue before sending another job.';
+   });
+ }
+
  Future<void> testCanonNative() async {
    if(pdfBytes==null || canonBusy)return;
    setState((){
@@ -418,7 +533,7 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>message='Sent to Android print dialog (not confirmed printed)');
    }catch(e){if(mounted)setState(()=>message='Print error: $e');}
  }
- @override void dispose(){nuConnection.disconnect();ip.dispose();servicePorts.dispose();super.dispose();}
+ @override void dispose(){nuConnection.disconnect();ip.dispose();servicePorts.dispose();bridgeHost.dispose();bridgePort.dispose();bridgeToken.dispose();super.dispose();}
  @override Widget build(BuildContext context){
    final style=Theme.of(context).textTheme;
    return Scaffold(appBar:AppBar(title:const Text('Digitus Print'),actions:[
@@ -704,6 +819,60 @@ class _HomeState extends State<Home> {
        const SizedBox(height:12),
        FilledButton.icon(onPressed:pdfBytes==null?null:printFile,icon:const Icon(Icons.print),label:const Text('Open Android print dialog')),
        const SizedBox(height:8),
+       const SizedBox(height:12),
+       const Divider(),
+       Text('Print using Windows PC',style:style.titleLarge),
+       const SizedBox(height:8),
+       const Text('WORKING PATH WHEN CONFIGURED: Your Windows PC prints '
+         'through the DIGITUS hub using the existing Canon driver. '
+         'The Windows PC must stay on and already print successfully. '
+         'This is not Android native NU printing.'),
+       const SizedBox(height:8),
+       TextField(controller:bridgeHost,keyboardType:TextInputType.url,
+         decoration:const InputDecoration(
+           labelText:'Windows PC IPv4 (not USB hub IP)',
+           hintText:'192.168.0.117',border:OutlineInputBorder())),
+       const SizedBox(height:8),
+       TextField(controller:bridgePort,keyboardType:TextInputType.number,
+         decoration:const InputDecoration(
+           labelText:'Bridge port',border:OutlineInputBorder())),
+       const SizedBox(height:8),
+       TextField(controller:bridgeToken,obscureText:true,
+         autocorrect:false,enableSuggestions:false,
+         decoration:const InputDecoration(
+           labelText:'Pairing token from Windows console',
+           border:OutlineInputBorder())),
+       const SizedBox(height:8),
+       const Text('Install the companion Windows bridge and SumatraPDF '
+         'on the PC. Run bridge.py with your Canon Windows queue name '
+         'and --host 0.0.0.0. Allow Private-network firewall only. '
+         'Local HTTP is not encrypted; use only on trusted Wi-Fi.'),
+       const SizedBox(height:8),
+       Wrap(spacing:8,runSpacing:8,children:[
+         OutlinedButton.icon(
+           onPressed:bridgeBusy?null:checkWindowsBridge,
+           icon:const Icon(Icons.wifi_find),
+           label:const Text('Check Windows bridge')),
+         FilledButton.icon(
+           onPressed:pdfBytes!=null&&!bridgeBusy&&!bridgeNeedsReview
+             ?sendViaWindowsBridge:null,
+           icon:const Icon(Icons.print),
+           label:Text(bridgeBusy?'Working...':'Send PDF via Windows')),
+         if(bridgeLastJobId!=null)OutlinedButton.icon(
+           onPressed:bridgeBusy?null:checkWindowsJob,
+           icon:const Icon(Icons.receipt_long),
+           label:const Text('Check last job')),
+         if(bridgeNeedsReview)OutlinedButton.icon(
+           onPressed:bridgeBusy?null:clearWindowsReview,
+           icon:const Icon(Icons.fact_check),
+           label:const Text('I checked Windows/printer; permit new job')),
+       ]),
+       if(bridgeNeedsReview)const Text(
+         'A previous job may be in progress or its delivery is uncertain. '
+         'Check last job before manually permitting a new one.'),
+       Text(bridgeMessage,style:style.bodyMedium),
+       const Text('Submitted to Windows spooler does not prove paper output. '
+         'Never blindly retry a job after a network error.'),
        const SizedBox(height:12),
        const Divider(),
        Text('NU / Canon compatibility audit',style:style.titleLarge),
