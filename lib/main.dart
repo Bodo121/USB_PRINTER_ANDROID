@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -29,7 +30,7 @@ class Home extends StatefulWidget {
 }
 class _HomeState extends State<Home> {
  final ip=TextEditingController(),queue=TextEditingController();
- int tab=0; bool busy=false,landscape=false;
+ int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
  Uint8List? pdfBytes; String filename='';
@@ -114,6 +115,26 @@ class _HomeState extends State<Home> {
      if(mounted)setState((){filename=f.name;tab=1;message='Prepared: $filename';});
    }catch(e){if(mounted)setState(()=>message='File error: $e');}
  }
+ Future<void> testCanonNative() async {
+   if (pdfBytes==null || !canonConsent || canonBusy) return;
+   if (ip.text.trim().isEmpty || queue.text.trim().isEmpty) {
+     setState(()=>message='First select your hub and configure its exact LPR queue.');return;
+   }
+   setState((){canonBusy=true;message='Converting first PDF page to Canon G2020-series IVEC raster on Android...';});
+   try {
+     final result=await const MethodChannel('digitus_print/canon').invokeMethod<String>(
+       'experimentalPrint',<String,dynamic>{
+         'pdf':pdfBytes,'host':ip.text.trim(),'queue':queue.text.trim(),
+         'gray':canonGrayscale,'approved':canonConsent,
+       });
+     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · Canon LPR ACK (output unverified): $filename');
+     final prefs=await SharedPreferences.getInstance();
+     history=history.take(20).toList();
+     await prefs.setStringList('history',history);
+     if(mounted)setState(()=>message=result??'LPR returned without a result');
+   } catch(e) { if(mounted)setState(()=>message='Canon test failed: $e'); }
+   finally { if(mounted)setState(()=>canonBusy=false); }
+ }
  Future<void> printFile() async {
    if(pdfBytes==null)return;
    try{
@@ -178,7 +199,24 @@ class _HomeState extends State<Home> {
        const SizedBox(height:12),
        FilledButton.icon(onPressed:pdfBytes==null?null:printFile,icon:const Icon(Icons.print),label:const Text('Open Android print dialog')),
        const SizedBox(height:8),
-       const Text('Direct LPR to Canon G2420 is disabled until a compatible Canon printer-language driver is implemented.'),
+       const SizedBox(height:12),
+       const Divider(),
+       Text('Native Canon test print',style:style.titleLarge),
+       const SizedBox(height:8),
+       const Text('Experimental: converts ONLY PAGE 1 to Canon G2020-series IVEC/PWG raster and sends it to your DIGITUS LPR queue. G2420 compatibility and hub forwarding are not yet verified; ink and paper may be consumed. No Windows or server required.'),
+       SwitchListTile(title:const Text('Grayscale'),subtitle:const Text('Canon normal-quality A4'),value:canonGrayscale,
+         onChanged:canonBusy?null:(value)=>setState(()=>canonGrayscale=value)),
+       CheckboxListTile(
+         title:const Text('I understand this is an unverified G2020-family test'),
+         value:canonConsent,onChanged:canonBusy?null:(value)=>setState(()=>canonConsent=value??false),
+       ),
+       FilledButton.icon(
+         onPressed:pdfBytes!=null && canonConsent && !canonBusy?testCanonNative:null,
+         icon:const Icon(Icons.science_outlined),
+         label:Text(canonBusy?'Preparing and sending raster...':'Send 1-page Canon IVEC test'),
+       ),
+       const Text('Hub acknowledgement only: the app cannot yet confirm physical page output or read G2420 ink/error status over LPR.'),
+
      ]else...[
        Text('Activity history',style:style.headlineMedium),
        const Text('Records print-dialog launches, not verified output.'),

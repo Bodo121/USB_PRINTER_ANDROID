@@ -17,6 +17,21 @@ jobs:
           cache: true
       - name: Create Android platform project
         run: flutter create . --project-name digitus_print --platforms android
+      - name: Install native Canon IVEC encoder and Flutter bridge
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          root=Path('native/src/main')
+          target=Path('android/app/src/main')
+          for src in (root/'kotlin').rglob('*.kt'):
+              dst=target/'kotlin'/src.relative_to(root/'kotlin')
+              dst.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copyfile(src,dst)
+          dst=target/'assets'
+          dst.mkdir(parents=True,exist_ok=True)
+          shutil.copyfile(root/'assets'/'ivec_models.json',dst/'ivec_models.json')
+          PY
       - name: Enable Android network discovery
         run: |
           python3 - <<'PY'
@@ -27,7 +42,7 @@ jobs:
           p.write_text(s)
           PY
       - name: Resolve dependencies
-        run: flutter pub get
+        run: flutter pub upgrade --major-versions
       - name: Analyze Dart source
         run: flutter analyze --no-fatal-infos lib
       - name: Build debug APK

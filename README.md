@@ -9,3 +9,11 @@ The app is a Flutter user interface and document-preparation prototype, **not ye
 Actions > Flutter Material 3 APK > successful run > Artifacts to download the debug APK.
 
 Local build: `flutter create . --platforms android --project-name digitus_print && flutter pub get && flutter build apk --debug`
+
+## Experimental native Canon test (v0.3)
+
+The Android Kotlin bridge includes a GPL-3.0-or-later-licensed IVEC/PWG Raster serializer, adapted from [noble6/canon-universal-driver](https://github.com/noble6/canon-universal-driver); the full original license is in `LICENSE`. It uses the G2020 profile as an **unverified candidate** for the Canon G2420. The first PDF page is rendered in Android PdfRenderer bands, encoded as Canon IVEC commands + PWG raster, and transmitted with RFC1179 LPR acknowledgements over port 515.
+
+No Windows runtime, cloud server or external print bridge is used. **The Canon G2420 model/profile match and binary forwarding by DA-70254 have not been tested with physical hardware.** Only a one-page user-confirmed experiment is exposed. The app cannot receive USB printer status or confirm page output via one-way LPR. Do not attempt nozzle cleaning, ink flushing, or scan operations until the bidirectional USB protocol is properly identified.
+
+`native/src/main` is copied into the Flutter Android app during CI. The repository is released under GPL-3.0-or-later due to the included Canon driver implementation. Copyright remains with the upstream contributors for adapted files. See `docs/DRIVER_RESEARCH.md`.
