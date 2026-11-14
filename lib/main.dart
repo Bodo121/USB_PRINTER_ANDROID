@@ -37,7 +37,7 @@ class _HomeState extends State<Home> {
  int selectedUsbSocket=1;
  bool probingServices=false;
  List<NetworkServicePort> networkServices=[];
- int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,canonDataFirst=false,showAdvanced=false,showPreview=false;
+ int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,canonDataFirst=false,canonReservedPort=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
  HubSnapshot? hubInfo;
@@ -57,6 +57,7 @@ class _HomeState extends State<Home> {
      selectedUsbSocket=(prefs.getInt('usbSocket')??1).clamp(1,4);
      history=prefs.getStringList('history')??[];
      canonDataFirst=prefs.getBool('canonDataFirst')??false;
+     canonReservedPort=prefs.getBool('canonReservedPort')??false;
    });
    if(ip.text.trim().isNotEmpty) { await checkSavedHub(); }
  }
@@ -308,6 +309,7 @@ class _HomeState extends State<Home> {
          'pdf':pdfBytes,'host':ip.text.trim(),'queue':queue.text.trim(),
          'gray':canonGrayscale,'approved':canonConsent,
          'dataFirst':canonDataFirst,
+         'reservedSourcePort':canonReservedPort,
        });
      history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · LPR transaction ACK, physical output unknown: $filename');
      final prefs=await SharedPreferences.getInstance();
@@ -505,6 +507,15 @@ class _HomeState extends State<Home> {
            setState(()=>canonDataFirst=value);
            final prefs=await SharedPreferences.getInstance();
            await prefs.setBool('canonDataFirst',value);
+         }),
+       SwitchListTile(
+         title:const Text('Advanced: RFC1179 reserved source port'),
+         subtitle:const Text('Tries local TCP ports 721-731. Usually denied for Android apps. This does NOT use root, never falls back, and never retries the print job.'),
+         value:canonReservedPort,
+         onChanged:canonBusy?null:(value)async{
+           setState(()=>canonReservedPort=value);
+           final prefs=await SharedPreferences.getInstance();
+           await prefs.setBool('canonReservedPort',value);
          }),
        CheckboxListTile(
          title:const Text('I understand this is an unverified G2020-family test'),
