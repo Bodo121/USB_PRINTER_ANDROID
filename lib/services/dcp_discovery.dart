@@ -105,7 +105,7 @@ class DcpDiscovery {
       } on SocketException {
         socket=await RawDatagramSocket.bind(InternetAddress.anyIPv4,0);
       }
-      final bound=socket!;
+      final bound=socket;
       subscription=bound.listen((event) {
         if(event!=RawSocketEvent.read)return;
         Datagram? datagram;
@@ -154,7 +154,7 @@ class DcpDiscovery {
     try {
       socket=await RawDatagramSocket.bind(InternetAddress.anyIPv4,52340,
         reuseAddress:true);
-      final bound=socket!;
+      final bound=socket;
       subscription=bound.listen((event){
         if(event!=RawSocketEvent.read)return;
         Datagram? datagram;
