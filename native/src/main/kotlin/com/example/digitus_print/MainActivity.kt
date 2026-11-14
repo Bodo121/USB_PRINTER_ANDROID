@@ -36,6 +36,7 @@ class MainActivity : FlutterActivity() {
             val queue = call.argument<String>("queue")?.trim().orEmpty()
             val approved = call.argument<Boolean>("approved") == true
             val gray = call.argument<Boolean>("gray") == true
+            val dataFirst = call.argument<Boolean>("dataFirst") == true
             if (!approved || pdf == null || pdf.isEmpty()) {
                 reply.error("CONFIRMATION", "Explicit test consent and a PDF are required", null)
                 return@setMethodCallHandler
@@ -47,7 +48,7 @@ class MainActivity : FlutterActivity() {
             }
             worker.execute {
                 try {
-                    val result = convertAndSend(pdf, host, queue, gray)
+                    val result = convertAndSend(pdf, host, queue, gray, dataFirst)
                     runOnUiThread { reply.success(result) }
                 } catch (ex: Exception) {
                     runOnUiThread { reply.error("PRINT_FAILED", ex.message ?: ex.javaClass.simpleName, null) }
@@ -56,7 +57,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun convertAndSend(pdfData: ByteArray, host: String, queue: String, gray: Boolean): String {
+    private fun convertAndSend(pdfData: ByteArray, host: String, queue: String, gray: Boolean, dataFirst: Boolean): String {
         val input = File.createTempFile("canon-source", ".pdf", cacheDir)
         val output = File.createTempFile("canon-ivec", ".bin", cacheDir)
         try {
@@ -80,7 +81,7 @@ class MainActivity : FlutterActivity() {
             if (output.length() == 0L || output.length() > 100L * 1024L * 1024L) {
                 throw IOException("Invalid or oversized Canon raster stream")
             }
-            val diagnostics = sendLpr(host, queue, output)
+            val diagnostics = sendLpr(host, queue, output, dataFirst)
             // Only a successful LPR transaction, NOT physical printer output.
             return "LPR TRANSPORT ACCEPTED (physical output unverified). " +
                 "Queue: $queue | Raster bytes: ${output.length()} | " +
@@ -93,7 +94,7 @@ class MainActivity : FlutterActivity() {
     }
 
     /** RFC 1179 receive-job transaction, with 1-byte acknowledgement after each stage. */
-    private fun sendLpr(host: String, queue: String, raster: File): List<String> {
+    private fun sendLpr(host: String, queue: String, raster: File, dataFirst: Boolean): List<String> {
         val stages = mutableListOf<String>()
         Socket().use { socket ->
             socket.connect(InetSocketAddress(host, 515), 8000)
@@ -127,12 +128,28 @@ class MainActivity : FlutterActivity() {
             val cf = "cfA${jobNum}android"
             val control = ("Handroid\nPandroid\nJCanon test\nl$df\nU$df\nNCanon-test\n")
                 .toByteArray(StandardCharsets.US_ASCII)
+            stages.add("source TCP port: ${socket.localPort}")
             sendCommand(2, queue); check("queue")
-            sendCommand(2, "${control.size} $cf"); check("control header")
-            stream.write(control); stream.write(0); stream.flush(); check("control data")
-            sendCommand(3, "${raster.length()} $df"); check("raster header")
-            FileInputStream(raster).use { it.copyTo(stream, 32768) }
-            stream.write(0); stream.flush(); check("raster data")
+            fun sendControl() {
+                sendCommand(2, "${control.size} $cf"); check("control header")
+                stream.write(control); stream.write(0); stream.flush()
+                check("control data")
+            }
+            fun sendData() {
+                sendCommand(3, "${raster.length()} $df"); check("raster header")
+                FileInputStream(raster).use { it.copyTo(stream, 32768) }
+                stream.write(0); stream.flush()
+                check("raster data")
+            }
+            // Never retry or switch ordering automatically. The user explicitly
+            // selects data-first in the test UI to avoid duplicate print jobs.
+            if (dataFirst) {
+                sendData()
+                sendControl()
+            } else {
+                sendControl()
+                sendData()
+            }
         }
         return stages
     }

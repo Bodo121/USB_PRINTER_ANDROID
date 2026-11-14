@@ -37,7 +37,7 @@ class _HomeState extends State<Home> {
  int selectedUsbSocket=1;
  bool probingServices=false;
  List<NetworkServicePort> networkServices=[];
- int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
+ int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,canonDataFirst=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
  HubSnapshot? hubInfo;
@@ -56,6 +56,7 @@ class _HomeState extends State<Home> {
      servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660,3240,515';
      selectedUsbSocket=(prefs.getInt('usbSocket')??1).clamp(1,4);
      history=prefs.getStringList('history')??[];
+     canonDataFirst=prefs.getBool('canonDataFirst')??false;
    });
    if(ip.text.trim().isNotEmpty) { await checkSavedHub(); }
  }
@@ -306,6 +307,7 @@ class _HomeState extends State<Home> {
        'experimentalPrint',<String,dynamic>{
          'pdf':pdfBytes,'host':ip.text.trim(),'queue':queue.text.trim(),
          'gray':canonGrayscale,'approved':canonConsent,
+         'dataFirst':canonDataFirst,
        });
      history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · LPR transaction ACK, physical output unknown: $filename');
      final prefs=await SharedPreferences.getInstance();
@@ -495,6 +497,15 @@ class _HomeState extends State<Home> {
        const Text('Experimental: converts ONLY PAGE 1 to Canon G2020-series IVEC/PWG raster and sends it to your DIGITUS LPR queue. G2420 compatibility and hub forwarding are not yet verified; ink and paper may be consumed. No Windows or server required.'),
        SwitchListTile(title:const Text('Grayscale'),subtitle:const Text('Canon normal-quality A4'),value:canonGrayscale,
          onChanged:canonBusy?null:(value)=>setState(()=>canonGrayscale=value)),
+       SwitchListTile(
+         title:const Text('Compatibility: send raster data first'),
+         subtitle:const Text('For older LPR servers that close after the control-file header. OFF uses RFC standard control-first. Does not automatically retry.'),
+         value:canonDataFirst,
+         onChanged:canonBusy?null:(value)async{
+           setState(()=>canonDataFirst=value);
+           final prefs=await SharedPreferences.getInstance();
+           await prefs.setBool('canonDataFirst',value);
+         }),
        CheckboxListTile(
          title:const Text('I understand this is an unverified G2020-family test'),
          value:canonConsent,onChanged:canonBusy?null:(value)=>setState(()=>canonConsent=value??false),
@@ -504,7 +515,7 @@ class _HomeState extends State<Home> {
          icon:const Icon(Icons.science_outlined),
          label:Text(canonBusy?'Preparing and sending raster...':'Send 1-page Canon IVEC test'),
        ),
-       const Text('Hub acknowledgement only: the app cannot yet confirm physical page output or read G2420 ink/error status over LPR.'),
+       const Text('If the hub closes after queue ACK, try Data First manually. This is a transport experiment and cannot verify Canon G2420 printer-language compatibility. Never repeatedly resend when the output status is uncertain.'),
 
      ]else...[
        Text('Activity history',style:style.headlineMedium),

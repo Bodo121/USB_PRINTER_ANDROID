@@ -47,3 +47,11 @@ The supplied 146 MiB NU_V1.25 software CD has now been inspected, with an embedd
 - The proprietary NU V1.25 attach, device list and USB bulk/control framing are still unknown; no unsafe or made-up vendor commands are sent. The Canon G2020-family raster profile remains *unverified for the G2420*.
 
 See [NU V1.25 protocol notes](docs/NU_V125_PROTOCOL.md) for extraction and capture findings.
+
+## v0.7.1 compatibility diagnostics for the LPR queue ACK / control-header disconnect
+
+A real phone test with `192.168.0.74` and queue `a9043a1802` received `queue: ACK 0` then the hub closed the connection before `control header` acknowledgement. This proves only that the initial queue transaction was acknowledged, **not** that the control file, raster bytes, or page were accepted.
+
+RFC 1179 allows control and data file transfer in either order and some nonconforming older LPR servers require the data file first. The test print now offers an explicit **Compatibility: send raster data first** switch; the default remains control-first. This is **manual**, never an automatic retry, to avoid duplicate prints. Logs also include the ephemeral local TCP source port, useful for testing the RFC 1179 privileged source-port restriction hypothesis (Android apps cannot bind privileged TCP ports without elevated permissions). The hub's actual rules and Canon G2420 raster compatibility remain unverified.
+
+If data-first also closes after queue ACK, test from Windows with the same queue and a confirmed correct Canon Windows printer driver, or capture that LPR traffic before implementing further transport guesses. Physical output must be independently confirmed.
