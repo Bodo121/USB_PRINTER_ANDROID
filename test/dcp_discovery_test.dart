@@ -24,6 +24,18 @@ void main(){
     expect(parsed.manufacturer,'Canon');
     expect(parsed.serial,'019249');
   });
+  test('Decodes 104-byte hub broadcast without inventing USB details',(){
+    final d=Uint8List(104);
+    d.setAll(0,'DCP\$'.codeUnits);
+    d.setAll(16,[0,0x24,0x9b,7,0x67,0xdd]);
+    d[32]=4;
+    d.setAll(48,[192,168,0,74]);
+    final info=DcpPacket.parse(d,'192.168.0.74');
+    expect(info,isNotNull);
+    expect(info!.physicalPortCount,4);
+    expect(info.mac,'00:24:9B:07:67:DD');
+    expect(info.reportedDevice,isNull);
+  });
   test('Rejects public network and invalid DCP framing',(){
     final d=Uint8List(1059);
     expect(DcpPacket.parse(d,'192.168.0.74'),isNull);
