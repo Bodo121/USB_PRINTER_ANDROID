@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'services/hub_discovery.dart';
+import 'services/hub_web_probe.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
 import 'package:file_picker/file_picker.dart';
@@ -33,6 +34,8 @@ class _HomeState extends State<Home> {
  int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
+ HubSnapshot? hubInfo;
+ int scanGeneration=0;
  Uint8List? pdfBytes; String filename='';
  List<String> hosts=[],history=[];
  final Map<String,List<LprCandidate>> queueMatches={};
@@ -41,10 +44,11 @@ class _HomeState extends State<Home> {
    final prefs=await SharedPreferences.getInstance();
    if(!mounted)return;
    setState((){
-     ip.text=prefs.getString('ip')??'';
+     ip.text=prefs.getString('ip')??'192.168.0.74';
      queue.text=prefs.getString('queue')??'';
      history=prefs.getStringList('history')??[];
    });
+   if(ip.text.trim().isNotEmpty) { await checkSavedHub(); }
  }
  Future<void> save() async {
    final prefs=await SharedPreferences.getInstance();
@@ -52,58 +56,125 @@ class _HomeState extends State<Home> {
    await prefs.setString('queue',queue.text.trim());
    if(mounted)setState(()=>message='Connection saved');
  }
+ Future<void> checkSavedHub() async {
+   final host=ip.text.trim();
+   if(host.isEmpty)return;
+   final details=await const HubWebProbe().inspect(host);
+   if(!mounted || ip.text.trim()!=host)return;
+   setState((){
+     hubInfo=details;
+     if(details!=null)message='USB sharing hub found at $host. LPR queue and printed output are not yet verified.';
+   });
+ }
+ void cancelDiscovery() {
+   scanGeneration++;
+   setState((){busy=false;message='Discovery cancelled';});
+ }
  Future<void> discover() async {
    if(busy)return;
-   setState((){busy=true;hosts=[];queueMatches.clear();progress=0;
-     message='Searching your local network for print servers...';});
+   final generation=++scanGeneration;
+   setState((){
+     busy=true;hosts=[];queueMatches.clear();progress=0;
+     message='Checking your USB hub...';
+   });
+   bool active()=>mounted && scanGeneration==generation;
    try {
-     final prefixes=await HubDiscovery.localPrefixes();
-     if(prefixes.isEmpty){
-       setState(()=>message='No private LAN address found. Connect to your Wi-Fi.');
+     // Fast path: recognize the user's known hub before scanning /24 ranges.
+     final previous=ip.text.trim();
+     final saved=await const HubWebProbe().inspect(previous);
+     if(!active())return;
+     if(saved!=null){
+       setState((){
+         hubInfo=saved;hosts=[previous];progress=0.6;
+         message='USB hub found. Checking read-only LPR queue status...';
+       });
+       if(await HubDiscovery.hasLpr(previous)) {
+         final matches=await HubDiscovery.probeQueues(previous);
+         if(!active())return;
+         setState(()=>queueMatches[previous]=matches);
+         await autoSelectSingle(previous,matches);
+         if(!active())return;
+         setState((){
+           progress=1;
+           message=matches.length==1
+             ? 'Hub recognized; one candidate queue saved. Printing remains unverified.'
+             : matches.isEmpty
+               ? 'Hub identified, but the firmware did not reveal a queue. Use Advanced Settings if needed.'
+               : 'Hub recognized; choose one of the candidate queues shown below.';
+         });
+       } else {
+         if(!active())return;
+         setState(()=>message='Hub web interface works, but LPR port 515 is unavailable.');
+       }
        return;
      }
+
+     final prefixes=await HubDiscovery.localPrefixes();
+     if(!active())return;
+     if(prefixes.isEmpty){
+       setState(()=>message='No private Wi-Fi network found.');
+       return;
+     }
+     setState(()=>message='Searching local network for USB sharing hubs...');
      final targets=<String>[];
-     for(final prefix in prefixes){
+     for(final prefix in prefixes) {
        for(int x=1;x<=254;x++){targets.add('$prefix.$x');}
      }
-     final found=<String>[];
+     final discovered=<String>[];
      for(var i=0;i<targets.length;i+=64){
-       final group=targets.skip(i).take(64);
-       final checks=await Future.wait(group.map((host)async{
-         return await HubDiscovery.hasLpr(host)?host:null;
+       final batch=targets.skip(i).take(64);
+       final candidates=await Future.wait(batch.map((host)async{
+         final lpr=await HubDiscovery.hasLpr(host);
+         if(!lpr)return null;
+         return host;
        }));
-       found.addAll(checks.whereType<String>());
-       if(!mounted)return;
+       if(!active())return;
+       discovered.addAll(candidates.whereType<String>());
        setState((){
-         hosts=List.of(found);
-         progress=((i+64).clamp(0,targets.length))/targets.length;
+         hosts=List.of(discovered);
+         progress=0.7*((i+64).clamp(0,targets.length))/targets.length;
        });
      }
-     if(found.isEmpty){
-       if(mounted)setState(()=>message='No LPR hub found. Check the network and printer hub.');
-       return;
-     }
-     if(mounted)setState(()=>message='Found ${found.length} LPR endpoint(s). Checking queues safely...');
-     // Old print servers may reject queue-status requests; never fabricate a queue.
-     for(final host in found.take(6)){
+     for(var i=0;i<discovered.length&&i<6;i++){
+       final host=discovered[i];
+       final details=await const HubWebProbe().inspect(host);
+       if(!active())return;
+       if(details!=null){
+         setState(()=>hubInfo=details);
+         // Prefer the identified hub; never identify a printer by its
+         // self-reported USB name as the G2420 profile remains user selected.
+         ip.text=host;
+       }
        final matches=await HubDiscovery.probeQueues(host);
-       if(!mounted)return;
+       if(!active())return;
        setState(()=>queueMatches[host]=matches);
+       await autoSelectSingle(host,matches);
+       if(!active())return;
+       setState(()=>progress=0.7+0.3*(i+1)/discovered.take(6).length);
      }
-     final confirmed=<LprCandidate>[];
-     for(final matches in queueMatches.values){confirmed.addAll(matches);}
-     if(confirmed.length==1 && found.length==1){
-       ip.text=confirmed.single.host;
-       queue.text=confirmed.single.queue;
-       await save();
-       if(mounted)setState(()=>message='Saved one possible LPR queue automatically. Print output and Canon model are not verified.');
-     }else if(mounted){
-       setState(()=>message=confirmed.isEmpty
-         ? 'Found ${found.length} LPR server(s), but none disclosed a known queue. Choose a hub; its queue may require one-time setup.'
-         : 'Found ${confirmed.length} possible queues. Select the correct entry to connect.');
-     }
-   }catch(e){if(mounted)setState(()=>message='Discovery error: $e');}
-   finally {if(mounted)setState(()=>busy=false);}
+     if(!active())return;
+     setState((){
+       message=discovered.isEmpty
+         ? 'No LPR servers found. Check hub power and Wi-Fi.'
+         : hubInfo!=null
+           ? 'USB hub identified. Select a verified candidate queue if available.'
+           : 'Found LPR endpoints, but none verified as the DIGITUS hub.';
+       progress=1;
+     });
+   }catch(e){
+     if(active())setState(()=>message='Discovery error: $e');
+   }finally {
+     if(active())setState(()=>busy=false);
+   }
+ }
+ Future<void> autoSelectSingle(String host,List<LprCandidate> matches) async {
+   // A queue-status reply may be identical for ANY queue on old firmware.
+   // Auto-select only when exactly one candidate has convincing evidence.
+   if(matches.length!=1)return;
+   ip.text=host;queue.text=matches.single.queue;
+   final prefs=await SharedPreferences.getInstance();
+   await prefs.setString('ip',host);
+   await prefs.setString('queue',queue.text);
  }
  Future<void> inspectQueue() async {
    final host = ip.text.trim(), q = queue.text.trim();
@@ -143,7 +214,7 @@ class _HomeState extends State<Home> {
  Future<void> testCanonNative() async {
    if (pdfBytes==null || !canonConsent || canonBusy) return;
    if (ip.text.trim().isEmpty || queue.text.trim().isEmpty) {
-     setState(()=>message='First select your hub and configure its exact LPR queue.');return;
+     setState(()=>message='No confirmed LPR queue. Discover the hub or use Advanced Settings.');return;
    }
    setState((){canonBusy=true;message='Converting first PDF page to Canon G2020-series IVEC raster on Android...';});
    try {
@@ -172,7 +243,7 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>message='Sent to Android print dialog (not confirmed printed)');
    }catch(e){if(mounted)setState(()=>message='Print error: $e');}
  }
- @override void dispose(){ip.dispose();queue.dispose();super.dispose();}
+ @override void dispose(){scanGeneration++;ip.dispose();queue.dispose();super.dispose();}
  @override Widget build(BuildContext context){
    final style=Theme.of(context).textTheme;
    return Scaffold(appBar:AppBar(title:const Text('Digitus Print'),actions:[
@@ -183,11 +254,25 @@ class _HomeState extends State<Home> {
      NavigationDestination(icon:Icon(Icons.history),label:'History')
    ]),body:ListView(padding:const EdgeInsets.all(18),children:[
      if(tab==0)...[
-       Text('Discover your print hub',style:style.headlineMedium),
+       Text('Your printer',style:style.headlineMedium),
+       const SizedBox(height:12),
+       Card.filled(child:Padding(padding:const EdgeInsets.all(16),child:Column(
+         crossAxisAlignment:CrossAxisAlignment.start,children:[
+         const Row(children:[Icon(Icons.print,size:32),SizedBox(width:12),
+           Expanded(child:Text('Canon PIXMA G2420',style:TextStyle(fontSize:20,fontWeight:FontWeight.w600)))]),
+         const SizedBox(height:12),
+         Text(hubInfo?.connectivityLabel??'Hub not identified yet'),
+         Text('DIGITUS · ${ip.text.isEmpty?'Not configured':ip.text}',style:style.bodySmall),
+         const SizedBox(height:4),
+         Text('Print path: unverified · Queue: ${queue.text.isEmpty?'Not found':queue.text}',style:style.bodySmall),
+         if(hubInfo!=null)Text('Hub firmware: ${hubInfo!.firmware??'Unknown'} · USB: ${hubInfo!.deviceStatus??'Unknown'}',style:style.bodySmall),
+       ]))),
        const SizedBox(height:8),
        const Text('Discover LPR servers and attempt read-only queue detection. The hub and Canon model are not identifiable via standard LPR alone.'),
        const SizedBox(height:16),
-       FilledButton.icon(onPressed:busy?null:discover,icon:const Icon(Icons.wifi_find),label:Text(busy?'Searching...':'Discover printers')),
+       FilledButton.icon(onPressed:busy?null:discover,icon:const Icon(Icons.wifi_find),label:Text(busy?'Searching...':'Find my printer')),
+       if(busy)TextButton.icon(onPressed:cancelDiscovery,icon:const Icon(Icons.close),label:const Text('Cancel search')),
+       OutlinedButton.icon(onPressed:busy?null:checkSavedHub,icon:const Icon(Icons.refresh),label:const Text('Refresh hub status')),
        if(busy)LinearProgressIndicator(value:progress),
        for(final host in hosts)Card(child:Column(children:[
          ListTile(leading:const Icon(Icons.router),title:Text('Print server · $host'),
@@ -229,10 +314,12 @@ class _HomeState extends State<Home> {
        ),
        const SizedBox(height:12),
        const Card(child:Padding(padding:EdgeInsets.all(14),child:Text(
-         'Canon PIXMA G2420 requires Canon raster printer commands. A detected LPR hub alone cannot print raw PDFs or photos. Android printing requires a compatible print service or bridge.'
+         'Hub status confirms a USB connection only. Printing on the Canon G2420 remains experimental until a physical test page succeeds.'
        ))),
      ]else if(tab==1)...[
        Text('Print a document',style:style.headlineMedium),
+       Card.filled(child:ListTile(leading:const Icon(Icons.print),title:const Text('Canon PIXMA G2420'),
+          subtitle:Text('DIGITUS · ${ip.text.isEmpty?'Not connected':ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'))),
        const Text('PDF, PNG, JPEG, TXT'),
        const SizedBox(height:16),
        FilledButton.icon(onPressed:pick,icon:const Icon(Icons.folder_open),label:const Text('Choose file')),
@@ -276,7 +363,7 @@ class _HomeState extends State<Home> {
 
      ]else...[
        Text('Activity history',style:style.headlineMedium),
-       const Text('Records print-dialog launches, not verified output.'),
+       const Text('Logs include print-dialog launches and LPR acknowledgements, not verified physical output.'),
        for(final item in history)ListTile(leading:const Icon(Icons.description_outlined),title:Text(item)),
        if(history.isEmpty)const ListTile(title:Text('No activity yet')),
      ],

@@ -1,19 +1,31 @@
-# Digitus Print · Flutter Material 3
+# DigitusPrint v0.5 — Android native hub discovery and Canon test printing
 
-Features: local LAN discovery of TCP/515 LPR candidates, saved IP and queue name, PDF/JPG/PNG/TXT selection, PDF preview, conversion of images and text to PDF, dark theme, and Android print dialog. GitHub Actions builds an installable debug APK.
+Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-70254** network USB hub. The user-selected printer remains G2420 regardless of the name reported by the USB hub.
 
-**Canon PIXMA G2420:** This USB-only printer needs model-compatible Canon raster commands. Raw PDF-to-LPR does not reliably work and has deliberately not been enabled. Android's print dialog works only with a compatible Android print service or bridge, which this build does not provide. Detected TCP/515 hosts are not necessarily DIGITUS devices. A queue name may have to be copied from the Windows DIGITUS utility > Device Properties.
+## Hub discovery and first-run experience
 
-The app is a Flutter user interface and document-preparation prototype, **not yet a driver**. The Activity tab tracks print-dialog launches, not printed pages.
+- Start with the last known hub, or `192.168.0.74` if there is no saved connection (editable).
+- Identify a known old firmware HTTP status page via read-only GET requests and show firmware and USB connection information. No passwords or hub configuration changes.
+- If there is no response from the known host, scan private local IPv4 /24 candidates for port 515. Discovery is cancellable (in-progress network requests may still finish, but results are ignored).
+- Probe a short list of likely LPR queues via read-only RFC1179 status requests. Save a queue automatically **only if exactly one positive candidate** is returned. These are heuristics: **LPR has no standardized queue enumeration** and the hub's status page does not provide the actual queue identifier. A supported queue must not be inferred from a TCP open port alone. Manual settings remain available under Advanced.
+- Display the configured Canon model, separately from the USB server's own device-name field.
 
-Actions > Flutter Material 3 APK > successful run > Artifacts to download the debug APK.
+## Experimental print path
 
-Local build: `flutter create . --platforms android --project-name digitus_print && flutter pub get && flutter build apk --debug`
+The native Kotlin IVEC/PWG Raster pipeline is adapted from GPL-3.0-or-later-licensed [noble6/canon-universal-driver](https://github.com/noble6/canon-universal-driver); see `LICENSE` and `native/`. It uses a related G2020 profile as an *experimental, unverified candidate* for G2420. Documents (PDF, PNG, JPG, TXT) are prepared as PDF in Flutter and the first page is rendered natively with Android PdfRenderer in bands before IVEC/PWG encoding and binary LPR transfer.
 
-## Experimental native Canon test (v0.3)
+**Do not claim printing works until a real G2420 test page prints.** An LPR acknowledgement proves only that the hub accepted the bytes. The app doesn't read true Canon ink levels or physical print-completion status. Maintenance, scanning, and multipage direct printing are not yet available. The Android system print dialog still requires an installed compatible PrintService.
 
-The Android Kotlin bridge includes a GPL-3.0-or-later-licensed IVEC/PWG Raster serializer, adapted from [noble6/canon-universal-driver](https://github.com/noble6/canon-universal-driver); the full original license is in `LICENSE`. It uses the G2020 profile as an **unverified candidate** for the Canon G2420. The first PDF page is rendered in Android PdfRenderer bands, encoded as Canon IVEC commands + PWG raster, and transmitted with RFC1179 LPR acknowledgements over port 515.
+## Performance and UI
 
-No Windows runtime, cloud server or external print bridge is used. **The Canon G2420 model/profile match and binary forwarding by DA-70254 have not been tested with physical hardware.** Only a one-page user-confirmed experiment is exposed. The app cannot receive USB printer status or confirm page output via one-way LPR. Do not attempt nozzle cleaning, ink flushing, or scan operations until the bidirectional USB protocol is properly identified.
+- Saved-hub fast path avoids entire-network scanning on most launches.
+- Scan network probes are concurrent; preview rendering is opt-in; progress and cancellation are supported.
+- Native Android high-refresh display-mode preference requests the best mode at native resolution (where possible), but does not force 120 FPS.
 
-`native/src/main` is copied into the Flutter Android app during CI. The repository is released under GPL-3.0-or-later due to the included Canon driver implementation. Copyright remains with the upstream contributors for adapted files. See `docs/DRIVER_RESEARCH.md`.
+## Build
+
+GitHub Actions runs `flutter pub upgrade --major-versions`, `flutter analyze --no-fatal-infos lib`, `flutter test`, and `flutter build apk --debug`. The APK is attached to each successful Actions run as `DigitusPrint-Flutter-debug`. Build is Android-native, with no Windows runtime dependency.
+
+## Source license
+
+GPL-3.0-or-later; the Canon IVEC/PWG driver portions are adapted from the named upstream GPL project.
