@@ -33,3 +33,7 @@ GPL-3.0-or-later; the Canon IVEC/PWG driver portions are adapted from the named 
 ## Native USB-over-IP protocol research (v0.6)
 
 A separate read-only standard USB/IP (TCP 3240) DEVLIST diagnostic has been added. This is a **protocol compatibility check only**: the legacy NU V1.25 software is not known to use Linux USB/IP. A failed check does not mean your hub is unreachable or disconnected. **Direct vendor USB-over-IP attachment and printing are not yet implemented.** Use `tools/analyze_nu_capture.py` to inspect a Windows Wireshark capture and `docs/NU_V125_PROTOCOL.md` for the exact capture workflow. No proprietary Windows binary is bundled in Android.
+
+### NU V1.25 original installer research
+
+The supplied 146 MiB NU_V1.25 software CD has now been inspected, with an embedded CAB extracted to reveal nested InstallShield installers for XP/Vista/Windows 7 and release notes referencing E1868/E2868/E3868. The 2011 release notes explicitly mention fixes to incorrect Printer/MFP queue names. Protocol decoding remains incomplete. See [NU V1.25 protocol research](docs/NU_V125_PROTOCOL.md). Proprietary Windows binaries are not bundled in this Android project.
