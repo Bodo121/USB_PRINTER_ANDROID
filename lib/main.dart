@@ -3,6 +3,7 @@ import 'services/hub_discovery.dart';
 import 'services/hub_web_probe.dart';
 import 'services/usbip_discovery.dart';
 import 'services/vendor_usb_discovery.dart';
+import 'services/dcp_discovery.dart';
 import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
@@ -47,6 +48,8 @@ class _HomeState extends State<Home> {
  HubSnapshot? hubInfo;
  UsbIpResult? usbIpDiagnostic;
  NuVendorObservation? vendorUsbDiagnostic;
+ DcpListenResult? dcpResult;
+ bool listeningDcp=false;
  bool vendorProbeRunning=false;
  int scanGeneration=0;
  Uint8List? pdfBytes; String filename='';
@@ -238,7 +241,7 @@ class _HomeState extends State<Home> {
          ? 'No LPR servers found. Check hub power and Wi-Fi.'
          : hubInfo!=null
            ? 'USB hub identified. Select a verified candidate queue if available.'
-           : 'Found LPR endpoints, but none verified as the DIGITUS DA-70251 hub.';
+           : 'Found LPR endpoints, but none verified as the DIGITUS hub.';
        progress=1;
      });
    }catch(e){
@@ -279,6 +282,24 @@ class _HomeState extends State<Home> {
      await prefs.setString('usbIpTcpPorts',servicePorts.text.trim());
    }catch(e){if(mounted)setState(()=>message='TCP port check failed: $e');}
    finally {if(mounted)setState(()=>probingServices=false);}
+ }
+ Future<void> listenForDcp() async {
+   if(listeningDcp)return;
+   final host=ip.text.trim();
+   setState((){
+     listeningDcp=true;
+     dcpResult=null;
+     message='Listening for DA-70251 discovery on UDP 52340...';
+   });
+   try {
+     final result=await const DcpDiscovery().listen(expectedHub:host);
+     if(!mounted||host!=ip.text.trim())return;
+     setState((){
+       dcpResult=result;
+       message=result.detail;
+     });
+   }catch(e){if(mounted)setState(()=>message='DCP listener error: $e');}
+   finally{if(mounted)setState(()=>listeningDcp=false);}
  }
  Future<void> inspectNuVendor() async {
    if(vendorProbeRunning)return;
@@ -464,7 +485,7 @@ class _HomeState extends State<Home> {
            Expanded(child:Text('Canon PIXMA G2420',style:TextStyle(fontSize:20,fontWeight:FontWeight.w600)))]),
          const SizedBox(height:12),
          Text(hubInfo?.connectivityLabel??'Hub not identified yet'),
-         Text('DIGITUS DA-70251 · ${ip.text.isEmpty?'Not configured':ip.text}',style:style.bodySmall),
+         Text('DIGITUS · ${ip.text.isEmpty?'Not configured':ip.text}',style:style.bodySmall),
          const SizedBox(height:4),
          Text('Print path: unverified · Queue: ${queue.text.isEmpty?'Not found':queue.text}',style:style.bodySmall),
          if(hubInfo!=null)Text('Hub firmware: ${hubInfo!.firmware??'Unknown'} · USB: ${hubInfo!.deviceStatus??'Unknown'}',style:style.bodySmall),
@@ -503,7 +524,7 @@ class _HomeState extends State<Home> {
            const Text('USB hub connection diagnostics',
              style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
            const SizedBox(height:8),
-           const Text('The DIGITUS DA-70251 hub has four physical USB sockets. TCP service ports (4660 / 3240 / 515) are network endpoints, not physical USB socket numbers.'),
+           const Text('The DIGITUS hub has four physical USB sockets. TCP service ports (4660 / 3240 / 515) are network endpoints, not physical USB socket numbers.'),
            const SizedBox(height:8),
            const Text('Physical USB socket (informational until vendor protocol is decoded)'),
            DropdownButton<int>(
@@ -563,6 +584,27 @@ class _HomeState extends State<Home> {
              style:TextStyle(fontSize:12)),
          ]))),
        const SizedBox(height:12),
+       Card.outlined(child:Padding(
+         padding:const EdgeInsets.all(12),
+         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+           const Text('DA-70251 native USB discovery',style:TextStyle(fontSize:16,fontWeight:FontWeight.bold)),
+           const SizedBox(height:6),
+           const Text('Listen for hub DCP\$ announcements on UDP 52340. No USB commands or device claims are transmitted.'),
+           OutlinedButton.icon(
+             onPressed:listeningDcp?null:listenForDcp,
+             icon:const Icon(Icons.sensors),
+             label:Text(listeningDcp?'Listening...':'Listen for USB devices')),
+           if(dcpResult!=null)Text(dcpResult!.detail),
+           if(dcpResult?.info!=null)...[
+             ListTile(title:Text(dcpResult!.info!.name),
+               subtitle:Text('MAC ${dcpResult!.info!.mac} · ${dcpResult!.info!.physicalPortCount} USB sockets')),
+             if(dcpResult!.info!.reportedDevice!=null)
+               ListTile(title:Text('USB descriptor: ${dcpResult!.info!.reportedDevice}'),
+                 subtitle:Text('Manufacturer: ${dcpResult!.info!.manufacturer??'Unknown'}')),
+           ],
+           const Text('Discovery alone is not USB attachment or print support.',style:TextStyle(fontSize:12)),
+         ]))),
+       const SizedBox(height:12),
        ExpansionTile(
          title:const Text('USB-over-IP research diagnostics'),
          subtitle:const Text('Safe protocol detection · no USB attachment'),
@@ -604,7 +646,7 @@ class _HomeState extends State<Home> {
      ]else if(tab==1)...[
        Text('Print a document',style:style.headlineMedium),
        Card.filled(child:ListTile(leading:const Icon(Icons.print),title:const Text('Canon PIXMA G2420'),
-          subtitle:Text('DIGITUS DA-70251 · ${ip.text.isEmpty?'Not connected':ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'))),
+          subtitle:Text('DIGITUS · ${ip.text.isEmpty?'Not connected':ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'))),
        const Text('PDF, PNG, JPEG, TXT'),
        const SizedBox(height:16),
        FilledButton.icon(onPressed:pick,icon:const Icon(Icons.folder_open),label:const Text('Choose file')),
