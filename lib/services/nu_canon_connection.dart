@@ -258,7 +258,8 @@ class NuCanonConnection {
   /// Process an entire pending window. Independent correlation is essential:
   /// the 02/09 prep response can arrive after later 02/03/02/05 replies.
   Future<int> _drainTracked(NuPendingReplies pending,
-      {bool requirePreparation=false}) async {
+      {bool requirePreparation=false,
+      void Function(NuReply reply)? onReply}) async {
     var completedOut=0;
     // Do not block on 02/09 alone: Windows receives prep40 after
     // OUT and IN replies for sequences 41-50.
@@ -278,6 +279,7 @@ class NuCanonConnection {
         final reply=NuReply.parse(bytes);
         _logPrint('RX '+reply.summary+' HEX48='+NuWire.hex(bytes));
         final matched=pending.accept(reply);
+        onReply?.call(reply);
         if(matched.command==2)completedOut+=matched.requested;
         if(matched.command==4) {
           _logPrint('READ seq='+reply.sequence.toString()+
@@ -296,83 +298,72 @@ class NuCanonConnection {
     return completedOut;
   }
 
-  /// Experimental bidirectional print pipeline. Windows sent prep40,
-  /// OUT41 (383-byte setup), then IN42/43/44 without waiting for replies.
-  /// Subsequent payload chunks use 1024-byte OUTs with interleaved reads.
-  /// The exact IN request flags, flow control and printer status semantics
-  /// are not yet validated. Matching NU responses NEVER prove paper output.
+  /// First-stage, explicitly approved NU handshake diagnostic.
+  /// The real Windows 2026-11-14 capture uses seq40 prep, seq41
+  /// 383-byte OUT on logical pipe 01 and seq42-44 1024-byte IN
+  /// on logical pipe 81. It then has 16-byte and 4-byte exchanges
+  /// whose payload semantics we have not decoded. Do NOT invent them
+  /// or stream the remainder of a raster on the wrong endpoint.
+  ///
+  /// No complete print job is attempted. The first OUT is still an
+  /// unverified experimental write, so never auto-retry uncertain data.
   Future<String> experimentalNuPrint(Uint8List raster) async {
-    final iface=printerInterface;
     if(!isConnected||_socket==null||
-        iface?.bulkOut?.address!=1||iface?.bulkIn==null||
+        printerInterface?.bulkOut?.address!=1||
         ieee1284DeviceId==null||!ieee1284DeviceId!.contains('IVEC')){
-      throw StateError('Connect, verify Canon USB and printer IN/OUT/ID first');
+      throw StateError('Connect, verify Canon USB and printer ID first');
     }
-    if(_printing)throw StateError('NU print already in progress');
-    if(raster.isEmpty||raster.length>20*1024*1024){
-      throw const FormatException('NU print data must be 1 byte to 20 MiB');
+    if(_printing)throw StateError('NU diagnostic already in progress');
+    if(raster.length<383||raster.length>20*1024*1024){
+      throw const FormatException('Expected Canon IVEC bytes (383..20 MiB)');
     }
     _printing=true;
     _printTrace.clear();
-    var matchedBytes=0;
-    var sentBytes=0;
-    var seq=40;
-    final inEndpoint=iface!.bulkIn!.address;
-    _logPrint('START data='+raster.length.toString()+
-      ' OUT=0x01 IN=0x'+inEndpoint.toRadixString(16)+
-      ' G2020-family IVEC encoder experimental; NO RETRIES');
+    var acknowledged=0;
+    _logPrint('START limited NU handshake diagnostic; rendered data='+
+      raster.length.toString()+
+      ' bytes, writing only first 383. Capture source: plm222.pcapng; '
+      'logical IN pipe=0x81, no automatic retry. NOT FULL PRINT.');
+    final pending=NuPendingReplies();
+    final inLengths=<int,int>{};
     try {
-      final pending=NuPendingReplies();
-      await _sendTracked(NuWire.prepare(sequence:seq),
-        8,seq++,64,pending);
-      final initial=raster.length<383?raster.length:383;
-      final first=Uint8List.sublistView(raster,0,initial);
-      await _sendTracked(NuWire.bulkOut(first,sequence:seq),
-        2,seq++,initial,pending);
-      sentBytes=initial;
-      for(var i=0;i<3;i++) {
+      await _sendTracked(NuWire.prepare(sequence:40),
+        8,40,64,pending);
+      await _sendTracked(NuWire.bulkOut(
+        Uint8List.sublistView(raster,0,383),sequence:41),
+        2,41,383,pending);
+      for(var seq=42;seq<=44;seq++) {
         await _sendTracked(NuWire.bulkIn(sequence:seq,
-          endpoint:inEndpoint,requestedLength:1024),
-          4,seq++,1024,pending);
+          endpoint:0x81,requestedLength:1024),
+          4,seq,1024,pending);
       }
-      matchedBytes+=await _drainTracked(pending);
-      // Bounded pipeline: no more than 2 OUTs and 2 INs in flight.
-      // This is deliberately conservative compared to the Windows client.
-      while(sentBytes<raster.length) {
-        // Keep the original seq40 preparation outstanding across windows.
-        for(var i=0;i<2&&sentBytes<raster.length;i++) {
-          final remain=raster.length-sentBytes;
-          final count=remain<1024?remain:1024;
-          final bytes=Uint8List.sublistView(raster,sentBytes,
-            sentBytes+count);
-          await _sendTracked(NuWire.bulkOut(bytes,sequence:seq),
-            2,seq++,count,pending);
-          sentBytes+=count;
-          await _sendTracked(NuWire.bulkIn(sequence:seq,
-            endpoint:inEndpoint,requestedLength:1024),
-            4,seq++,1024,pending);
-        }
-        matchedBytes+=await _drainTracked(pending);
+      acknowledged+=await _drainTracked(pending,onReply:(r){
+        if(r.command==5)inLengths[r.sequence]=r.bodyLength;
+      });
+      // In the successful Windows capture seq42 and seq43 are empty,
+      // but seq44 has 487 bytes. There is no proof this will always
+      // hold on other printer states or firmware versions.
+      _logPrint('PHASE1 seq42='+ (inLengths[42]??-1).toString()+
+        ' seq43='+(inLengths[43]??-1).toString()+
+        ' seq44='+(inLengths[44]??-1).toString()+
+        ' (Windows reference 0/0/487).');
+      if(!inLengths.values.any((length)=>length>0)){
+        throw StateError('No printer data from seq42..44 on logical NU '
+          'pipe 0x81. Aborting before seq45: inspect RX status in log. '
+          'Print delivery uncertain, no retry.');
       }
-      if(!pending.isEmpty) {
-        _logPrint('WAIT delayed 02/09 prep reply after other bulk replies');
-        matchedBytes+=await _drainTracked(pending,requirePreparation:true);
-      }
-      _logPrint('END matching NU bulk OUT replies for '+
-        matchedBytes.toString()+' bytes; PHYSICAL PRINT UNVERIFIED');
-      return 'NU replied to '+matchedBytes.toString()+
-        ' bulk OUT bytes; printer output NOT verified. '+
-        'Copy diagnostic trace before starting another attempt.';
+      _logPrint('STOP after known seq40..44 handshake; Windows next '
+        'writes 16 bytes at seq45 followed by 512-byte INs and '
+        'multiple undecoded device-specific exchanges. Those cannot '
+        'be constructed from the IVEC raster alone.');
+      return 'NU handshake probe returned printer data; '
+        'no complete print job was sent. Export the trace. '
+        'The full Canon print protocol is not yet implemented.';
     }catch(e){
-      _logPrint('FAILED after '+matchedBytes.toString()+
-        ' OUT bytes matched, '+sentBytes.toString()+
-        ' sent; '+e.toString()+'; NO RETRY');
-      // Do not resend uncertain bytes. Retain trace after disconnect.
-      await disconnect();
+      _logPrint('FAILED after '+acknowledged.toString()+
+        ' matching OUT bytes. '+e.toString()+'; NO RETRY');
       rethrow;
     }finally{
-      // A late response from this session must never be mistaken for a
-      // reply to a subsequent print attempt using sequence 40 again.
       await disconnect();
       _printing=false;
     }
