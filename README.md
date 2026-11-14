@@ -1,3 +1,21 @@
+## Digitus Print v1.0 - Windows-assisted Canon printing
+
+Print using Windows PC sends a selected PDF from Android to the Windows
+computer that already successfully prints through the DIGITUS DA-70251.
+It reuses the real Windows Canon driver and DIGITUS USB Server.
+A companion Windows bridge ZIP, Python 3.10+ and SumatraPDF are required.
+
+Open Print, select a PDF, enter Windows PC IP (not the DIGITUS hub IP),
+port 8765 and the pairing token, check the Windows bridge, and send.
+Windows must stay on and connected to the printer. Submitted means
+accepted by the Windows print spooler, not physical paper verified.
+Job idempotency and review gates prevent inadvertent automatic retries.
+Local HTTP is unencrypted; use a trusted private LAN only.
+
+Setup: [Windows printing guide](docs/WINDOWS_PRINT_MODE.md).
+Direct Android to DIGITUS native NU printing remains unavailable.
+The Windows companion archive is distributed separately with this build.
+
 # DigitusPrint — Canon G2420 / DIGITUS DA-70251
 
 Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-70251** network USB hub. The user-selected printer remains G2420 regardless of the name reported by the USB hub.
