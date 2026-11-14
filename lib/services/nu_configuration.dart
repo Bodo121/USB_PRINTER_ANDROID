@@ -51,7 +51,7 @@ class NuConfigurationDecoder {
       if(endpoints.length!=expectedCount){
         throw const FormatException('USB endpoint descriptor count mismatch');
       }
-      configurations.add(NuInterface(number!,alternate!,klass!,subclass!,
+      configurations.add(NuInterface(number,alternate!,klass!,subclass!,
         protocol!,List.unmodifiable(endpoints)));
       endpoints.clear();
     }
