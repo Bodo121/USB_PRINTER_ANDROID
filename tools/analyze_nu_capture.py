@@ -114,11 +114,28 @@ def summarize(data,hub,samples):
         record=flows[key]
         record["packets"]+=1
         record["bytes"]+=len(payload)
+        # Recognize the passive UNT$ fingerprint seen on the legacy server.
+        # Only parse packet metadata: no active commands are sent.
+        if payload and len(payload)>=24 and payload[16:20]==b"UNT$" and \
+                payload[:16]==bytes(range(16,0,-1)):
+            record["unt_signature_packets"]=record.get("unt_signature_packets",0)+1
+            record.setdefault("unt_lengths",[])
+            if len(record["unt_lengths"])<16:
+                record["unt_lengths"].append(len(payload))
+            record.setdefault("unt_byte24_values",[])
+            if len(payload)>24 and len(record["unt_byte24_values"])<16:
+                record["unt_byte24_values"].append(payload[24])
         if samples and payload and len(record["examples"])<3:
             record["examples"].append(payload[:48].hex(" "))
-    return {"hub_filter":hub,"flows":[dict(src=k[0],source_port=k[1],
+    reports=[dict(src=k[0],source_port=k[1],
       dst=k[2],destination_port=k[3],protocol=k[4],**v)
-      for k,v in sorted(flows.items(),key=lambda x:-x[1]["bytes"])]}
+      for k,v in sorted(flows.items(),key=lambda x:-x[1]["bytes"])]
+    observed_ports=sorted(set(row["destination_port"]
+      for row in reports if row["dst"]==hub and row["bytes"]>0))
+    return {"hub_filter":hub,
+      "observed_hub_application_ports":observed_ports,
+      "note":"UNT$ signatures are passive fingerprints, not a decoded USB protocol",
+      "flows":reports}
 
 
 def main():
