@@ -1,0 +1,15 @@
+name: digitus_print
+description: Material 3 LAN printing app for DIGITUS hubs
+publish_to: none
+version: 0.2.0+2
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^10.3.3
+  pdf: ^3.11.3
+  printing: ^5.15.1
+  shared_preferences: ^2.5.3
+flutter:
+  uses-material-design: true
