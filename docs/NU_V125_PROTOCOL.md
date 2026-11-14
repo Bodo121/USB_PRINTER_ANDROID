@@ -86,3 +86,24 @@ Next local step: inspect the installed program's actual files (after Windows ins
 ## Hardware model correction
 
 Owner confirmed **DA-70251**. Refer to its own official manual: https://ftp.assmann.com/pub/DA-/DA-70251___4016032329916/ . This device supports a virtual USB server client and per-physical-port automatic connections. Do not infer its chipset or its LPR behavior from the DA-70254 manual. The observation of TCP 4660 in the uploaded capture remains valid for the *owner's actual hub*, regardless of the previous model label.
+
+## DA-70251 Win8.1 driver and exact manual supplied by owner (2014 / 2013)
+
+Inspected original user-uploaded files **locally without executing Windows binaries**:
+
+- `DA-70251_driver_Driver Win8.1_20140128.zip` — 1 ZIP member, `USBServer_NPW_Setup_11_1027_0050_2015_WHQL.exe` (26,797,056 bytes).
+- The executable contains a valid Microsoft CAB archive embedded at offset **60,564**. Extracted with libarchive, not by running the executable.
+- Embedded CAB members:
+  - `Install_OS4.exe` — 65,536 bytes
+  - `XP64_Setup.exe` — 7,600,658 bytes
+  - `XP_Setup.exe` — 7,245,461 bytes
+  - `W7_VS_Setup.exe` — 7,254,314 bytes
+  - `VS_W7_64_Setup.exe` — 7,600,055 bytes
+- These nested executables are **InstallShield** setup loaders with further packed content. Directly passing them to libarchive did not expose user-mode USB client binaries or driver DLLs. Nothing in this extraction has decoded the attach/USB-URB protocol. An extracted program installation directory remains valuable.
+- The separate owner's official `DA-70251_manual_English_20130422.pdf` is **54 pages**. It documents a virtual-USB utility that enumerates server/device status (pages 9–14), a four-port server configuration screen (pages 20–22), automatic printer connection (page 23), and device/port automatic connection (pages 24–26). It states the application connects a USB device as if attached directly to the PC, and releases it on disconnect.
+- **Crucially, the exact DA-70251 manual contains no LPR/LPD/RFC1179 printer-queue setup instructions.** Previous LPR support claims came from the **different DA-70254** manual and should not be presented as established DA-70251 capabilities.
+- The manual does **not** specify TCP port 4660, the `UNT$` wire signature, USB enumeration opcodes, device claim messages, or USB bulk transfer framing. Port 4660 and the prefix remain observations **from the owner's original PCAP**, not documented manufacturer semantics.
+
+Research correction: **KCodes NetUSB** is a separate publicly described USB-over-IP implementation, commonly documented on TCP port 20005, whereas this DA-70251 owner's observed TCP 4660 / `UNT$` traffic and NU installer branding are different. There is currently **no demonstrated equivalence**. Do not reuse KCodes framing or assume ASIX/KCodes chipset without a verified hardware/driver identification.
+
+**Next required evidence**: start a Wireshark capture *before* starting the Windows USB Server program, then Search, Connect Device, Disconnect Device, and stop. Capture server responses and connection setup. Alternatively supply the installed client binaries and driver files; setup executables are not those binaries. A successful print in Windows USB Server alone cannot validate Android LPR behavior.
