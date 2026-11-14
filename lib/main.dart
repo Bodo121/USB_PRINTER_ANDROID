@@ -33,9 +33,12 @@ class Home extends StatefulWidget {
 }
 class _HomeState extends State<Home> {
  final ip=TextEditingController(),queue=TextEditingController(),
-   servicePorts=TextEditingController(text:'4660,3240,515');
+   servicePorts=TextEditingController(text:'4660,3240,515,9100');
  int selectedUsbSocket=1;
  bool probingServices=false;
+ bool checkingUpdate=false,downloadingUpdate=false,updateDownloaded=false;
+ String updateMessage='';
+ Map<String,dynamic>? availableUpdate;
  List<NetworkServicePort> networkServices=[];
  int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,canonDataFirst=false,canonReservedPort=false,showAdvanced=false,showPreview=false;
  double progress=0;
@@ -60,6 +63,67 @@ class _HomeState extends State<Home> {
      canonReservedPort=prefs.getBool('canonReservedPort')??false;
    });
    if(ip.text.trim().isNotEmpty) { await checkSavedHub(); }
+   checkForUpdates(silent:true);
+ }
+ static bool newerVersion(String remote, String current) {
+   List<int> parse(String value) => value.split('+').first.split('-').first
+     .split('.').map((v)=>int.tryParse(v)??0).toList();
+   final a=parse(remote), b=parse(current);
+   for(var i=0;i<3;i++){
+     final av=i<a.length?a[i]:0, bv=i<b.length?b[i]:0;
+     if(av!=bv)return av>bv;
+   }
+   return false;
+ }
+ Future<void> checkForUpdates({bool silent=false}) async {
+   if(checkingUpdate)return;
+   setState(()=>checkingUpdate=true);
+   try{
+     final result=await const MethodChannel('digitus_print/updates')
+       .invokeMapMethod<String,dynamic>('check');
+     if(!mounted || result==null)return;
+     final info=Map<String,dynamic>.from(result);
+     setState((){
+       availableUpdate=info;
+       updateDownloaded=false;
+       final latest=info['version']?.toString()??'0.0.0';
+       final installed=info['current']?.toString()??'0.0.0';
+       updateMessage=newerVersion(latest,installed)
+         ? 'Version $latest is available (installed: $installed).'
+         : 'You are on the latest published version ($installed).';
+     });
+   }catch(e){
+     if(mounted && !silent)setState(()=>updateMessage='Could not check GitHub Releases: $e');
+   }finally{if(mounted)setState(()=>checkingUpdate=false);}
+ }
+ Future<void> downloadUpdate() async {
+   final item=availableUpdate;
+   if(item==null||downloadingUpdate)return;
+   setState((){
+     downloadingUpdate=true;
+     updateDownloaded=false;
+     updateMessage='Downloading and verifying the release APK...';
+   });
+   try{
+     final bytes=await const MethodChannel('digitus_print/updates')
+        .invokeMethod<int>('download',{
+          'url':item['url'],'digest':item['digest'],
+          'version':item['version']});
+     if(mounted)setState((){
+       updateDownloaded=true;
+       updateMessage='Downloaded and verified ${bytes??0} bytes. Tap Install to open Android installer.';
+     });
+   }catch(e){if(mounted)setState(()=>updateMessage='Update download failed: $e');}
+   finally{if(mounted)setState(()=>downloadingUpdate=false);}
+ }
+ Future<void> installUpdate() async {
+   try{
+     final result=await const MethodChannel('digitus_print/updates')
+       .invokeMethod<String>('install');
+     if(mounted)setState(()=>updateMessage=result=='permission_required'
+       ? 'Allow updates from DigitusPrint in Android settings, then return and tap Install.'
+       : 'Android installer opened. Confirm the update there.');
+   }catch(e){if(mounted)setState(()=>updateMessage='Unable to open installer: $e');}
  }
  Future<void> save() async {
    final prefs=await SharedPreferences.getInstance();
@@ -342,6 +406,35 @@ class _HomeState extends State<Home> {
      NavigationDestination(icon:Icon(Icons.history),label:'History')
    ]),body:ListView(padding:const EdgeInsets.all(18),children:[
      if(tab==0)...[
+       Card.outlined(child:Padding(
+         padding:const EdgeInsets.all(12),
+         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+           const Row(children:[Icon(Icons.system_update_alt),
+             SizedBox(width:10),
+             Expanded(child:Text('App updates',
+               style:TextStyle(fontWeight:FontWeight.bold,fontSize:17)))]),
+           const SizedBox(height:6),
+           if(updateMessage.isNotEmpty)Text(updateMessage),
+           const SizedBox(height:8),
+           OutlinedButton.icon(onPressed:checkingUpdate||downloadingUpdate?null:()=>checkForUpdates(),
+             icon:const Icon(Icons.refresh),
+             label:Text(checkingUpdate?'Checking...':'Check for updates')),
+           if(availableUpdate!=null && newerVersion(
+               availableUpdate!['version']?.toString()??'0',
+               availableUpdate!['current']?.toString()??'0'))...[
+             if(downloadingUpdate)const LinearProgressIndicator(),
+             if(!updateDownloaded)FilledButton.icon(
+               onPressed:downloadingUpdate?null:downloadUpdate,
+               icon:const Icon(Icons.download),
+               label:const Text('Download verified APK')),
+             if(updateDownloaded)FilledButton.icon(
+               onPressed:installUpdate,icon:const Icon(Icons.install_mobile),
+               label:const Text('Install update')),
+           ],
+           const Text('Updates come from signed GitHub Releases. Android always asks you to approve installation.',
+             style:TextStyle(fontSize:12)),
+         ]))),
+       const SizedBox(height:12),
        Text('Your printer',style:style.headlineMedium),
        const SizedBox(height:12),
        Card.filled(child:Padding(padding:const EdgeInsets.all(16),child:Column(

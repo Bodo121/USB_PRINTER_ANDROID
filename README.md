@@ -59,3 +59,12 @@ If data-first also closes after queue ACK, test from Windows with the same queue
 ## v0.7.2 legacy LPR source-port diagnostics
 
 RFC 1179 specifies the client-side source TCP port range 721–731, while Android's ordinary app sandbox usually chooses an ephemeral local port. Some old LPD servers enforce this, but the queue ACK/control-header disconnect does **not** prove it is the cause. Microsoft's Standard TCP/IP Port Monitor can use ephemeral source ports in LPR mode, so old hubs vary. A manual, opt-in “RFC1179 reserved source port” switch now binds local port 721–731 before opening the connection. No root escalation, no automatic fallback, and no retry; a failed bind produces a clear message *before sending any print data*. Use the existing Data First switch separately, only for a deliberate one-page test. The Canon G2420 print profile remains unverified.
+
+## v0.8 updater / safe raw-port diagnostics
+
+- The Discover screen has an **App updates** panel; it checks GitHub Releases and compares semantic versions, downloads a signed APK from the project's release page, verifies its GitHub-provided SHA-256 digest, then opens the Android installer on explicit user action. It does not bypass user confirmation.
+- GitHub Actions can publish an update APK to the public release feed when *all four* stable signing secrets are present: `ANDROID_RELEASE_KEYSTORE_B64`, `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS`, and `ANDROID_RELEASE_KEY_PASSWORD`. Never commit the keystore or signing passwords.
+- **Important migration:** previous CI debug APKs use ephemeral signing certificates. Android cannot update those in place with a differently signed release APK. Make a backup and uninstall the old prototype once before installing the first properly signed release; later updates work in place as long as the release key never changes.
+- New installations must enable **Install unknown apps** for DigitusPrint through Android settings. Updates prompt for explicit Android approval.
+- TCP `9100` was added to the default read-only network port checks. An open port does not prove that the DA-70254 forwards printer data. The app intentionally **does not** blast raster data to an unverified raw socket.
+- The existing **Data First** switch remains a manual, single-job diagnostic. Neither this change nor the updater tests the printer physically.

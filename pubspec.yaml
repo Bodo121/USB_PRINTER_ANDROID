@@ -1,7 +1,7 @@
 name: digitus_print
 description: Android-native Canon experimental printing and DIGITUS hub discovery
 publish_to: none
-version: 0.7.2+9
+version: 0.8.0+10
 environment:
   sdk: '>=3.12.0 <4.0.0'
   flutter: '>=3.44.0'

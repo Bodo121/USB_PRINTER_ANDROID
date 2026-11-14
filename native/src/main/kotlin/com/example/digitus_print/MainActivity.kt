@@ -24,8 +24,10 @@ import java.util.concurrent.Executors
 /** Native Canon raster conversion + LPR delivery; does NOT use Windows or CUPS. */
 class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
+    private var updateBridge: UpdateBridge? = null
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        updateBridge = UpdateBridge(this).also { it.register(engine) }
         MethodChannel(engine.dartExecutor.binaryMessenger, "digitus_print/canon").setMethodCallHandler { call, reply ->
             if (call.method != "experimentalPrint") {
                 reply.notImplemented()
@@ -205,6 +207,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        updateBridge?.close()
         worker.shutdown()
         super.onDestroy()
     }

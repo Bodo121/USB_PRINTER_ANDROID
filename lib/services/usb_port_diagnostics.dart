@@ -12,7 +12,7 @@ class NetworkServicePort {
 class UsbPortDiagnostics {
   const UsbPortDiagnostics();
 
-  static const defaultPorts = <int>[4660,3240,515];
+  static const defaultPorts = <int>[4660,3240,515,9100];
   static const int physicalPortCount = 4;
 
   static List<int> parsePorts(String input) {
@@ -36,6 +36,7 @@ class UsbPortDiagnostics {
     if (port==4660) return 'NU V1.25 candidate (UNT\$ observed in capture)';
     if (port==3240) return 'Standard Linux USB/IP';
     if (port==515) return 'LPR printing';
+    if (port==9100) return 'Raw JetDirect/AppSocket candidate (presence not guaranteed)';
     return 'Custom TCP service (protocol unknown)';
   }
 
