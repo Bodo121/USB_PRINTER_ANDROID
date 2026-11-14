@@ -101,4 +101,31 @@ void main() {
     expect(read[24],0x45);
     expect(read[25],0x03);
   });
+  test('prep 02/09 may arrive only after ten subsequent replies',(){
+    final p=NuPendingReplies();
+    p.add(8,40,64);
+    p.add(2,41,383);
+    for(var seq=42;seq<=44;seq++)p.add(4,seq,1024);
+    p.accept(NuReply.parse(response(2,41,requested:383)));
+    for(var seq=42;seq<=44;seq++) {
+      p.accept(NuReply.parse(response(4,seq,requested:1024,
+        responseBytes:seq==44?487:0)));
+    }
+    expect(p.length,1);
+    expect(p.hasDataPending,isFalse);
+    for(var seq=45;seq<=50;seq++){
+      p.add(seq.isOdd?2:4,seq,1024);
+    }
+    expect(p.hasDataPending,isTrue);
+    for(var seq=50;seq>=45;seq--){
+      final op=seq.isOdd?2:4;
+      p.accept(NuReply.parse(response(op,seq,requested:1024,
+        responseBytes:op==4?970:0)));
+    }
+    expect(p.hasDataPending,isFalse);
+    expect(p.length,1);
+    p.accept(NuReply.parse(response(8,40,requested:64,responseBytes:32)));
+    expect(p.isEmpty,isTrue);
+  });
+
 }
