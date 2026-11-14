@@ -96,11 +96,11 @@ class NuSessionDiagnostics {
           onTimeout:()=>null);
       if(reply==null||!NuHello.isGreetingReply(reply)){
         return NuHelloResult(accepted:false,
-          detail:'No valid 100-byte UNT$ session greeting was received. '
+          detail:'No valid 100-byte UNT protocol session greeting was received. '
             'No device was claimed and no USB transfer was sent.');
       }
       return NuHelloResult(accepted:true,
-        detail:'Hub acknowledged the observed UNT$ session greeting. '
+        detail:'Hub acknowledged the observed UNT protocol session greeting. '
           'Echo name: ${NuHello.responseName(reply)}. '
           'This proves only the initial handshake, not USB attachment or printing.');
     }on SocketException catch(e) {
