@@ -40,16 +40,17 @@ class DcpPacket {
     // 1059-byte DCP$ response in owner's PCAP:
     // bytes 16..21 = MAC, 32 = number of physical sockets, 40 = name,
     // EST$ at 104, with IP at 114; nested per-device DCP$ at offset 176.
-    if(bytes.length<176 || bytes.length>4096) return null;
-    if(_str(bytes,0,4)!='DCP$' || _str(bytes,104,4)!='EST$')return null;
+    if(bytes.length<104 || bytes.length>4096) return null;
+    if(_str(bytes,0,4)!='DCP$')return null;
     if(!UsbPortDiagnostics.privateIpv4(sourceIp))return null;
-    final mac=_mac(bytes,16),name=_str(bytes,40,64);
+    final mac=_mac(bytes,16);
+    final detailed=bytes.length>=176 && _str(bytes,104,4)=='EST$';
+    final name=detailed?_str(bytes,40,64):'DA-70251 USB sharing server';
     final sockets=bytes[32];
-    final embeddedIp=_ip(bytes,114);
-    if(sockets<1 || sockets>16 || name.isEmpty ||
-      !name.contains('USB') || embeddedIp!=sourceIp)return null;
+    final embeddedIp=detailed?_ip(bytes,114):_ip(bytes,48);
+    if(sockets<1 || sockets>16 || name.isEmpty || embeddedIp!=sourceIp)return null;
     String? device,manufacturer,serial;
-    if(bytes.length>=288 && _str(bytes,176,4)=='DCP$'){
+    if(detailed && bytes.length>=288 && _str(bytes,176,4)=='DCP$'){
       device=_str(bytes,200,32);
       manufacturer=_str(bytes,232,40);
       serial=_str(bytes,272,16);
@@ -80,37 +81,52 @@ class DcpDiscovery {
     if(!UsbPortDiagnostics.privateIpv4(expectedHub)) {
       throw const FormatException('DCP listening requires a private hub IPv4');
     }
-    RawDatagramSocket? socket;
-    StreamSubscription<RawSocketEvent>? subscription;
-    final completed=Completer<DcpHubInfo?>();
-    try{
-      socket=await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,52340,reuseAddress:true);
-      socket.broadcastEnabled=true;
-      subscription=socket.listen((event){
-        if(event!=RawSocketEvent.read)return;
-        Datagram? datagram;
-        while((datagram=socket!.receive())!=null){
-          final d=datagram!;
-          if(d.address.address!=expectedHub)continue;
-          final info=DcpPacket.parse(Uint8List.fromList(d.data),expectedHub);
-          if(info!=null&&!completed.isCompleted)completed.complete(info);
+    final sockets=<RawDatagramSocket>[];
+    final listeners=<StreamSubscription<RawSocketEvent>>[];
+    DcpHubInfo? best;
+    final done=Completer<void>();
+    final errors=<String>[];
+    try {
+      for (final port in const [52340,52330]) {
+        try {
+          final socket=await RawDatagramSocket.bind(
+            InternetAddress.anyIPv4,port,reuseAddress:true);
+          sockets.add(socket);
+          listeners.add(socket.listen((event){
+            if (event!=RawSocketEvent.read)return;
+            Datagram? d;
+            while ((d=socket.receive())!=null) {
+              final packet=d!;
+              if(packet.address.address!=expectedHub)continue;
+              final info=DcpPacket.parse(
+                Uint8List.fromList(packet.data),expectedHub);
+              if(info==null)continue;
+              if(best==null || info.reportedDevice!=null)best=info;
+              if(info.reportedDevice!=null && !done.isCompleted){
+                done.complete();
+              }
+            }
+          },onError:(Object error){errors.add('$port: $error');}));
+        } on SocketException catch(e) {
+          errors.add('$port: $e');
         }
-      },onError:(Object e){
-        if(!completed.isCompleted)completed.completeError(e);
-      });
-      final info=await completed.future.timeout(duration,onTimeout:()=>null);
+      }
+      if (sockets.isEmpty) {
+        return DcpListenResult(null,
+          'Cannot bind DCP discovery listener: ${errors.join('; ')}');
+      }
+      await done.future.timeout(duration,onTimeout:(){});
+      final info=best;
       return DcpListenResult(info,info==null
-        ? 'No DCP$ advertisement observed on UDP 52340. The hub may be quiet, '
-          'broadcasts may be blocked on Wi-Fi, or another application may own '
-          'the port. This does not prove the hub is offline.'
-        : 'Observed DCP$ USB server announcement from ${info.ip}: '
-          '${info.physicalPortCount} physical USB sockets.');
-    }on SocketException catch(e){
-      return DcpListenResult(null,'Could not listen on UDP 52340: $e');
-    }finally{
-      await subscription?.cancel();
-      socket?.close();
+        ? 'No DCP$ advertisement observed on UDP 52330/52340. '
+          'The hub may be quiet or Wi-Fi broadcast isolation may be enabled.'
+        : info.reportedDevice!=null
+          ? 'DA-70251 detailed device list received.'
+          : 'DA-70251 broadcast received: ${info.physicalPortCount} USB ports. '
+            'A full device list needs the vendor discovery request.');
+    } finally {
+      for (final listener in listeners) { await listener.cancel(); }
+      for (final socket in sockets) { socket.close(); }
     }
   }
 }
