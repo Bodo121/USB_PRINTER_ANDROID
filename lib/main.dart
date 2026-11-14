@@ -429,6 +429,13 @@ class _HomeState extends State<Home> {
    try{
      final bridge=_windowsBridge();
      await _saveBridgeSettings();
+     // Windows must own the DIGITUS virtual USB device to print.
+     // Release a stale Android NU session before contacting the bridge.
+     if(nuConnection.isConnected){
+       if(mounted)setState(()=>bridgeMessage=
+         'Releasing Android NU USB reservation for Windows printing...');
+       await nuConnection.disconnect();
+     }
      final h=await bridge.check();
      if(!h.ready)throw StateError('Windows PC print bridge is not ready: '+h.note);
      final id=WindowsPrintBridge.newJobId();
