@@ -210,20 +210,6 @@ class NuCanonConnection {
     }on FormatException{return false;}
   }
 
-  /// NU replies have NO client preamble: 32-byte header plus declared body.
-  /// TCP segmentation and coalescing are handled by the socket byte buffer.
-  Future<Uint8List> _readNuResponse(Duration timeout) async {
-    final header=await _readExact(32,timeout);
-    if(header[0]!=85||header[1]!=78||header[2]!=84||header[3]!=36){
-      throw const FormatException('NU reply magic mismatch');
-    }
-    final bodyLength=(header[4]<<8)|header[5];
-    if(bodyLength>4096)throw const FormatException('NU body exceeds bound');
-    if(bodyLength==0)return header;
-    final body=await _readExact(bodyLength,timeout);
-    return Uint8List.fromList(<int>[...header,...body]);
-  }
-
   /// Each diagnostic line includes protocol direction, opcode, full 16-bit
   /// sequence, requested/returned length and the first 48 raw bytes.
   /// This may reveal up to 16 bytes of printer status in RX. Share carefully.
@@ -235,68 +221,6 @@ class NuCanonConnection {
     } else if(_printTrace.length==50000) {
       _printTrace.add('TRACE TRUNCATED after 50000 records');
     }
-  }
-
-  Future<void> _sendTracked(Uint8List frame,int command,int sequence,
-      int count,NuPendingReplies pending) async {
-    final socket=_socket;
-    if(socket==null||_ended){
-      throw const SocketException('NU session ended during print');
-    }
-    if(NuWire.txSequence(frame)!=sequence){
-      throw StateError('NU TX sequence encoding mismatch');
-    }
-    pending.add(command,sequence,count,
-      timeout:command==8?const Duration(seconds:30):
-        const Duration(seconds:12));
-    _logPrint('TX 02/'+command.toRadixString(16).padLeft(2,'0')+
-      ' seq='+sequence.toString()+' count='+count.toString()+
-      ' HEX48='+NuWire.hex(frame));
-    socket.add(frame);
-    await socket.flush();
-  }
-
-  /// Process an entire pending window. Independent correlation is essential:
-  /// the 02/09 prep response can arrive after later 02/03/02/05 replies.
-  Future<int> _drainTracked(NuPendingReplies pending,
-      {bool requirePreparation=false,
-      void Function(NuReply reply)? onReply}) async {
-    var completedOut=0;
-    // Do not block on 02/09 alone: Windows receives prep40 after
-    // OUT and IN replies for sequences 41-50.
-    while(requirePreparation?!pending.isEmpty:pending.hasDataPending) {
-      final oldest=pending.oldest!;
-      final remaining=oldest.deadline.difference(DateTime.now());
-      if(remaining<=Duration.zero) {
-        final msg='NU timed out awaiting 02/'+
-          (oldest.command+1).toRadixString(16).padLeft(2,'0')+
-          ' seq='+oldest.sequence.toString()+
-          ', '+pending.length.toString()+' pending';
-        _logPrint('TIMEOUT '+msg);
-        throw TimeoutException(msg+'. Print delivery uncertain, no retry');
-      }
-      try {
-        final bytes=await _readNuResponse(remaining);
-        final reply=NuReply.parse(bytes);
-        _logPrint('RX '+reply.summary+' HEX48='+NuWire.hex(bytes));
-        final matched=pending.accept(reply);
-        onReply?.call(reply);
-        if(matched.command==2)completedOut+=matched.requested;
-        if(matched.command==4) {
-          _logPrint('READ seq='+reply.sequence.toString()+
-            ' USB data bytes='+reply.bodyLength.toString()+
-            ' (printer status is not decoded)');
-        }
-      }on TimeoutException{
-        final msg='NU response timeout: oldest 02/'+
-          (oldest.command+1).toRadixString(16).padLeft(2,'0')+
-          ' seq='+oldest.sequence.toString()+
-          '; '+pending.length.toString()+' still pending';
-        _logPrint('TIMEOUT '+msg);
-        throw TimeoutException(msg+'. Print delivery uncertain, no retry');
-      }
-    }
-    return completedOut;
   }
 
   /// Offline analysis only. The captured Windows 383-byte USB transaction
