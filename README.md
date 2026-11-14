@@ -37,3 +37,13 @@ A separate read-only standard USB/IP (TCP 3240) DEVLIST diagnostic has been adde
 ### NU V1.25 original installer research
 
 The supplied 146 MiB NU_V1.25 software CD has now been inspected, with an embedded CAB extracted to reveal nested InstallShield installers for XP/Vista/Windows 7 and release notes referencing E1868/E2868/E3868. The 2011 release notes explicitly mention fixes to incorrect Printer/MFP queue names. Protocol decoding remains incomplete. See [NU V1.25 protocol research](docs/NU_V125_PROTOCOL.md). Proprietary Windows binaries are not bundled in this Android project.
+
+## v0.7 USB and print diagnostics
+
+- The Canon G2420 one-page test now reports each **RFC1179 LPR acknowledgement**: queue selection, control-file header, control-file upload, data-file header and raster upload. It also reports the encoded job byte count and identifies the failed stage when an ACK is rejected, the connection closes, or times out. All-zero ACKs mean *hub/LPD transport accepted the job*, NOT that paper was printed.
+- An **empty LPR queue-status response** is explicitly *not* treated as an accepted job. The user-supplied queue `a9043a1802` is the fallback value only if the user has no saved queue; an existing saved value is preserved.
+- Multi-port *network service* diagnostics check TCP ports `4660,3240,515` by default (editable up to 16). TCP 4660 is grounded in the user's NU V1.25 packet capture and `UNT$` marker; opening a TCP connection only verifies socket reachability, **not a functional proprietary USB-over-IP session**.
+- The hub has **four physical USB sockets**, selectable in diagnostics (1–4) and saved for future protocol development. This selection DOES NOT yet route USB traffic or select an LPR queue. These are different from network TCP port numbers.
+- The proprietary NU V1.25 attach, device list and USB bulk/control framing are still unknown; no unsafe or made-up vendor commands are sent. The Canon G2020-family raster profile remains *unverified for the G2420*.
+
+See [NU V1.25 protocol notes](docs/NU_V125_PROTOCOL.md) for extraction and capture findings.

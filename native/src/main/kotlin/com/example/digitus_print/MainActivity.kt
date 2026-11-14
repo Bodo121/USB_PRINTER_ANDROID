@@ -80,9 +80,12 @@ class MainActivity : FlutterActivity() {
             if (output.length() == 0L || output.length() > 100L * 1024L * 1024L) {
                 throw IOException("Invalid or oversized Canon raster stream")
             }
-            sendLpr(host, queue, output)
-            // LPR ACK only means the server accepted data, not that the printer produced paper.
-            return "DIGITUS LPR accepted one Canon IVEC test page. Check printer output; physical printing is unverified."
+            val diagnostics = sendLpr(host, queue, output)
+            // Only a successful LPR transaction, NOT physical printer output.
+            return "LPR TRANSPORT ACCEPTED (physical output unverified). " +
+                "Queue: $queue | Raster bytes: ${output.length()} | " +
+                diagnostics.joinToString(" | ") +
+                ". Check the Canon G2420 for actual paper output."
         } finally {
             input.delete()
             output.delete()
@@ -90,7 +93,8 @@ class MainActivity : FlutterActivity() {
     }
 
     /** RFC 1179 receive-job transaction, with 1-byte acknowledgement after each stage. */
-    private fun sendLpr(host: String, queue: String, raster: File) {
+    private fun sendLpr(host: String, queue: String, raster: File): List<String> {
+        val stages = mutableListOf<String>()
         Socket().use { socket ->
             socket.connect(InetSocketAddress(host, 515), 8000)
             socket.soTimeout = 15000
@@ -102,8 +106,21 @@ class MainActivity : FlutterActivity() {
                 stream.flush()
             }
             fun check(stage: String) {
-                val code = input.read()
-                if (code != 0) throw IOException("LPR $stage rejected: response $code")
+                val code = try {
+                    input.read()
+                } catch (ex: java.net.SocketTimeoutException) {
+                    throw IOException(
+                        "LPR timeout awaiting $stage ACK; completed: ${stages.joinToString(", ")}",
+                        ex
+                    )
+                }
+                if (code < 0) throw IOException(
+                    "LPR closed before $stage ACK; completed: ${stages.joinToString(", ")}"
+                )
+                if (code != 0) throw IOException(
+                    "LPR rejected $stage (code $code); completed: ${stages.joinToString(", ")}"
+                )
+                stages.add("$stage: ACK 0")
             }
             val jobNum = ((System.currentTimeMillis() / 1000) % 1000).toString().padStart(3, '0')
             val df = "dfA${jobNum}android"
@@ -117,6 +134,7 @@ class MainActivity : FlutterActivity() {
             FileInputStream(raster).use { it.copyTo(stream, 32768) }
             stream.write(0); stream.flush(); check("raster data")
         }
+        return stages
     }
 
     // Prefer the existing native-resolution high-refresh mode without forcing

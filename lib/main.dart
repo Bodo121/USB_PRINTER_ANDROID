@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'services/hub_discovery.dart';
 import 'services/hub_web_probe.dart';
 import 'services/usbip_discovery.dart';
+import 'services/usb_port_diagnostics.dart';
 import 'package:flutter/services.dart';
 import 'services/lpr_transport.dart';
 import 'package:file_picker/file_picker.dart';
@@ -31,7 +32,11 @@ class Home extends StatefulWidget {
  @override State<Home> createState()=>_HomeState();
 }
 class _HomeState extends State<Home> {
- final ip=TextEditingController(),queue=TextEditingController();
+ final ip=TextEditingController(),queue=TextEditingController(),
+   servicePorts=TextEditingController(text:'4660,3240,515');
+ int selectedUsbSocket=1;
+ bool probingServices=false;
+ List<NetworkServicePort> networkServices=[];
  int tab=0; bool busy=false,landscape=false,canonConsent=false,canonBusy=false,canonGrayscale=false,showAdvanced=false,showPreview=false;
  double progress=0;
  String message='Ready to scan',paper='A4';
@@ -47,7 +52,9 @@ class _HomeState extends State<Home> {
    if(!mounted)return;
    setState((){
      ip.text=prefs.getString('ip')??'192.168.0.74';
-     queue.text=prefs.getString('queue')??'';
+     queue.text=prefs.getString('queue')??'a9043a1802';
+     servicePorts.text=prefs.getString('usbIpTcpPorts')??'4660,3240,515';
+     selectedUsbSocket=(prefs.getInt('usbSocket')??1).clamp(1,4);
      history=prefs.getStringList('history')??[];
    });
    if(ip.text.trim().isNotEmpty) { await checkSavedHub(); }
@@ -56,6 +63,8 @@ class _HomeState extends State<Home> {
    final prefs=await SharedPreferences.getInstance();
    await prefs.setString('ip',ip.text.trim());
    await prefs.setString('queue',queue.text.trim());
+   await prefs.setString('usbIpTcpPorts',servicePorts.text.trim());
+   await prefs.setInt('usbSocket',selectedUsbSocket);
    if(mounted)setState(()=>message='Connection saved');
  }
  Future<void> checkSavedHub() async {
@@ -178,6 +187,30 @@ class _HomeState extends State<Home> {
    await prefs.setString('ip',host);
    await prefs.setString('queue',queue.text);
  }
+ Future<void> checkUsbNetworkPorts() async {
+   if(probingServices)return;
+   List<int> ports;
+   try {ports=UsbPortDiagnostics.parsePorts(servicePorts.text);}
+   catch(e){if(mounted)setState(()=>message='Invalid TCP ports: $e');return;}
+   final host=ip.text.trim();
+   setState((){
+     probingServices=true;
+     networkServices=[];
+     message='Checking TCP services on your USB hub (connection-only)...';
+   });
+   try {
+     final results=await const UsbPortDiagnostics().check(
+       host:host,ports:ports);
+     if(!mounted || host!=ip.text.trim())return;
+     setState((){
+       networkServices=results;
+       message='${results.where((e)=>e.open).length} of ${results.length} TCP ports accepted connections. Open ports do not prove USB-over-IP protocol compatibility.';
+     });
+     final prefs=await SharedPreferences.getInstance();
+     await prefs.setString('usbIpTcpPorts',servicePorts.text.trim());
+   }catch(e){if(mounted)setState(()=>message='TCP port check failed: $e');}
+   finally {if(mounted)setState(()=>probingServices=false);}
+ }
  Future<void> inspectNativeUsbIp() async {
    final host=ip.text.trim();
    if(host.isEmpty){setState(()=>message='Find the USB hub first');return;}
@@ -198,7 +231,7 @@ class _HomeState extends State<Home> {
    try {
      final response = await const LprTransport().queryQueue(host:host,queue:q);
      if(mounted)setState(()=>message=response.trim().isEmpty
-       ? 'LPD replied with an empty queue status (printer compatibility not verified)'
+       ? 'Empty LPR status response: this is NOT a print-job ACK. Queue may still be valid; use the explicit one-page test to check the LPR transfer.'
        : 'LPD queue response: ${response.trim().length>400?response.trim().substring(0,400):response.trim()}');
    } catch(e) { if(mounted)setState(()=>message='Queue check failed: $e'); }
  }
@@ -274,7 +307,7 @@ class _HomeState extends State<Home> {
          'pdf':pdfBytes,'host':ip.text.trim(),'queue':queue.text.trim(),
          'gray':canonGrayscale,'approved':canonConsent,
        });
-     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · Canon LPR ACK (output unverified): $filename');
+     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · LPR transaction ACK, physical output unknown: $filename');
      final prefs=await SharedPreferences.getInstance();
      history=history.take(20).toList();
      await prefs.setStringList('history',history);
@@ -294,7 +327,7 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>message='Sent to Android print dialog (not confirmed printed)');
    }catch(e){if(mounted)setState(()=>message='Print error: $e');}
  }
- @override void dispose(){scanGeneration++;ip.dispose();queue.dispose();super.dispose();}
+ @override void dispose(){scanGeneration++;ip.dispose();queue.dispose();servicePorts.dispose();super.dispose();}
  @override Widget build(BuildContext context){
    final style=Theme.of(context).textTheme;
    return Scaffold(appBar:AppBar(title:const Text('Digitus Print'),actions:[
@@ -347,6 +380,47 @@ class _HomeState extends State<Home> {
          title:const Text('Saved print server'),
          subtitle:Text('${ip.text} · ${queue.text.isEmpty?'Queue unknown':queue.text}'),
        ),
+       Card.outlined(child:Padding(padding:const EdgeInsets.all(12),
+         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+           const Text('USB hub connection diagnostics',
+             style:TextStyle(fontWeight:FontWeight.bold,fontSize:16)),
+           const SizedBox(height:8),
+           const Text('The DIGITUS hub has four physical USB sockets. TCP service ports (4660 / 3240 / 515) are network endpoints, not physical USB socket numbers.'),
+           const SizedBox(height:8),
+           const Text('Physical USB socket (informational until vendor protocol is decoded)'),
+           DropdownButton<int>(
+             value:selectedUsbSocket,
+             items:List.generate(UsbPortDiagnostics.physicalPortCount,
+               (i)=>DropdownMenuItem(value:i+1,child:Text('USB socket ${i+1}'))),
+             onChanged:(value)async{
+               if(value==null)return;
+               setState(()=>selectedUsbSocket=value);
+               final prefs=await SharedPreferences.getInstance();
+               await prefs.setInt('usbSocket',value);
+             }),
+           const Text('Selecting a socket does not route print jobs yet.',
+             style:TextStyle(fontSize:12)),
+           const SizedBox(height:8),
+           TextField(controller:servicePorts,
+             keyboardType:TextInputType.text,
+             decoration:const InputDecoration(
+               border:OutlineInputBorder(),
+               labelText:'TCP ports to check',
+               helperText:'Comma-separated; default 4660,3240,515 (max 16)')),
+           const SizedBox(height:8),
+           OutlinedButton.icon(onPressed:probingServices?null:checkUsbNetworkPorts,
+             icon:const Icon(Icons.lan),
+             label:Text(probingServices?'Checking ports...':'Check network services')),
+           for(final port in networkServices)
+             ListTile(dense:true,
+               leading:Icon(port.open?Icons.check_circle_outline:Icons.cancel_outlined,
+                 color:port.open?Colors.green:null),
+               title:Text('TCP ${port.port}: ${port.open?'Open':'No connection'}'),
+               subtitle:Text(port.description)),
+           const Text('Open TCP 4660 may match the NU V1.25 traffic captured on Windows. It is not a functional USB-over-IP connection until the vendor handshake is decoded.',
+             style:TextStyle(fontSize:12)),
+         ]))),
+       const SizedBox(height:12),
        ExpansionTile(
          title:const Text('USB-over-IP research diagnostics'),
          subtitle:const Text('Safe protocol detection · no USB attachment'),
