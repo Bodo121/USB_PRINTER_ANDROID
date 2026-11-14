@@ -2,6 +2,23 @@
 
 Flutter Material 3 application for **Canon PIXMA G2420** over a **DIGITUS DA-70251** network USB hub. The user-selected printer remains G2420 regardless of the name reported by the USB hub.
 
+
+## Current native NU experiment — v0.9.3 (2026-11-14)
+
+The Print > Test 1-page NU printing button uses proprietary NU TCP/4660
+rather than LPR. The current app constructs 1460-byte client records,
+matches out-of-order 02/03, 02/05 and 02/09 replies using 16-bit sequence
+numbers, sends the initial prep/383-byte OUT/three bulk IN read pipeline,
+and interleaves further 1024-byte bulk transfers. A full TX/RX diagnostic
+trace can be copied after a print attempt.
+
+Physical printing is NOT verified. The connected Canon G2010 ID
+(VID 04A9 / PID 183A) differs from the G2020-family IVEC raster
+profile, and the precise bulk IN flags and printer status semantics are
+still unverified. Never automatically retry or resume uncertain output.
+
+Older LPR notes below are historical, not the current native sender.
+
 ## Hub discovery and first-run experience
 
 - Start with the last known hub, or `192.168.0.74` if there is no saved connection (editable).
