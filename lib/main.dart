@@ -398,9 +398,9 @@ class _HomeState extends State<Home> {
        });
      if(raster==null||raster.isEmpty)throw StateError('No raster generated');
      if(!mounted)return;
-     setState(()=>message='Experimental NU bulk OUT: sending ${raster.length} bytes; no automatic retry...');
+     setState(()=>message='NU handshake probe: 383 bytes only, no complete print; no automatic retry...');
      final result=await nuConnection.experimentalNuPrint(raster);
-     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · NU bulk test: ${raster.length} bytes; physical output unverified');
+     history.insert(0,'${DateTime.now().toLocal().toString().substring(0,16)} · NU handshake probe: 383 of ${raster.length} bytes; no full print');
      history=history.take(20).toList();
      final prefs=await SharedPreferences.getInstance();
      await prefs.setStringList('history',history);
@@ -718,7 +718,7 @@ class _HomeState extends State<Home> {
          'validated and a failed attempt may leave output status uncertain. '
          'Do not repeat a job without checking the printer.'),
        SwitchListTile(
-         title:const Text('Enable experimental NU printing'),
+         title:const Text('Enable experimental NU handshake probe'),
          subtitle:const Text('Opt-in only; requires an open verified NU session '
            'and Canon printer-class ID (IVEC).'),
          value:nuExperimentalPrint,
@@ -728,7 +728,7 @@ class _HomeState extends State<Home> {
          value:canonGrayscale,
          onChanged:canonBusy?null:(v)=>setState(()=>canonGrayscale=v)),
        CheckboxListTile(
-         title:const Text('I accept an unverified NU bulk-transfer print test'),
+         title:const Text('I accept a limited experimental 383-byte USB write'),
          value:canonConsent,
          onChanged:canonBusy?null:(v)=>setState(()=>canonConsent=v??false)),
        FilledButton.icon(
@@ -737,8 +737,8 @@ class _HomeState extends State<Home> {
            nuConnection.ieee1284DeviceId!=null && !canonBusy
              ?testCanonNative:null,
          icon:const Icon(Icons.print),
-         label:Text(canonBusy?'Sending experimental NU raster...':
-           'Test 1-page NU printing')),
+         label:Text(canonBusy?'Probing NU handshake...':
+           'Run NU handshake probe (not full printing)')),
        const Text('Requires Connect and verify Canon USB, then Read Canon '
          'printer-class ID on the Discover tab. USB completion does not '
          'prove a page printed. Never automatically retry.'),
@@ -752,7 +752,7 @@ class _HomeState extends State<Home> {
            },
            icon:const Icon(Icons.copy_all),
            label:const Text('Copy full NU TX/RX debug log')),
-       const Text('Protocol still experimental. The G2010 USB identity does '
+       const Text('This diagnostic deliberately stops after NU seq44. The G2010 USB identity does '
          'not validate the bundled G2020-family raster profile.'),
 
      ]else...[
