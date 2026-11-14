@@ -54,6 +54,8 @@ class _HomeState extends State<Home> {
  bool dcpListening=false;
  final NuCanonConnection nuConnection=NuCanonConnection();
  bool nuConnectRunning=false;
+ bool nuPrinterIdRunning=false;
+ String nuPrinterIdMessage='';
  String nuConnectionMessage='Not connected to Canon USB device';
  NuHelloResult? nuGreetingResult;
  bool nuGreetingRunning=false;
@@ -347,9 +349,31 @@ class _HomeState extends State<Home> {
      if(mounted)setState(()=>nuConnectRunning=false);
    }
  }
+ Future<void> readCanonPrinterId() async {
+   if(nuPrinterIdRunning||!nuConnection.isConnected)return;
+   setState((){
+     nuPrinterIdRunning=true;
+     nuPrinterIdMessage='Requesting USB printer-class IEEE 1284 ID...';
+   });
+   try {
+     final id=await nuConnection.readPrinterId();
+     if(mounted)setState((){
+       nuPrinterIdMessage=id;
+       message='Canon printer-class response verified over NU TCP 4660.';
+     });
+   } catch(e) {
+     if(mounted)setState((){
+       nuPrinterIdMessage='Printer ID request failed: $e';
+       message=nuPrinterIdMessage;
+     });
+   } finally {
+     if(mounted)setState(()=>nuPrinterIdRunning=false);
+   }
+ }
  Future<void> disconnectCanonNu() async {
    await nuConnection.disconnect();
    if(mounted)setState((){
+     nuPrinterIdMessage='';
      nuConnectionMessage='NU TCP session closed. Vendor release opcode unverified.';
      message=nuConnectionMessage;
    });
@@ -708,6 +732,14 @@ class _HomeState extends State<Home> {
                label:const Text('Disconnect NU session')),
            ]),
            const SizedBox(height:8),
+           OutlinedButton.icon(
+             onPressed:nuPrinterIdRunning||!nuConnection.isConnected
+               ?null:readCanonPrinterId,
+             icon:const Icon(Icons.badge_outlined),
+             label:Text(nuPrinterIdRunning?'Reading ID...':
+               'Read Canon printer-class ID')),
+           if(nuPrinterIdMessage.isNotEmpty)
+             SelectableText(nuPrinterIdMessage),
            Text(nuConnectionMessage),
            if(nuConnection.printerInterface!=null)...[
              Text('USB printer interface: ${nuConnection.printerInterface!.number}'),

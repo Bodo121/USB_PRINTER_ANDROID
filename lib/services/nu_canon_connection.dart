@@ -18,6 +18,7 @@ class NuCanonConnection {
   bool _ended=false;
   String? _connectedHost;
   NuConfiguration? configuration;
+  String? ieee1284DeviceId;
   NuInterface? get printerInterface => configuration?.printerInterface;
 
   bool get isConnected => _socket!=null && !_ended &&
@@ -102,6 +103,82 @@ class NuCanonConnection {
        reply[38]!=expectedLength||reply[39]!=0 ||
        reply[40]!=9||reply[41]!=2)return null;
     return Uint8List.fromList(reply.sublist(40));
+  }
+
+  /// USB printer-class GET_DEVICE_ID request observed in plm222.pcapng.
+  /// Only the correlation identifier changes; no print bytes are transmitted.
+  static Uint8List capturedPrinterIdRequest({int sequence=0x18}) {
+    if(sequence<0||sequence>255) {
+      throw const FormatException('NU request sequence must fit one byte');
+    }
+    final packet=Uint8List(1460);
+    packet.fillRange(0,packet.length,0);
+    packet.setAll(0,NuHello.prefix);
+    packet.setAll(16,const <int>[
+      0x55,0x4e,0x54,0x24,0x00,0x08,0x02,0x00,
+      0x20,0x00,0x00,0x00,0x33,0x00,0x00,0x00,
+      0x01,0x00,0x00,0x00,0x08,0x00,0xf1,0x03,
+      0xa1,0x00,0x01,0x00,0x00,0x10,0x02,0x08,
+      0xa1,0x00,0x00,0x00,0x00,0x01,0xf1,0x03
+    ]);
+    packet[24]=sequence;
+    return packet;
+  }
+
+  /// Validate the echoed USB request and the IEEE 1284 big-endian length
+  /// before interpreting any device identification text.
+  static String parsePrinterIdReply(Uint8List reply,{int sequence=0x18}) {
+    if(reply.length<44||reply.length>2048 ||
+       reply[0]!=0x55||reply[1]!=0x4e||reply[2]!=0x54||
+       reply[3]!=0x24||reply[6]!=2||reply[7]!=1||
+       reply[8]!=sequence||reply[32]!=0xa1||reply[33]!=0||
+       reply[37]!=1) {
+      throw const FormatException('Unexpected NU printer ID reply');
+    }
+    final nuLength=(reply[4]<<8)|reply[5];
+    if(nuLength+32!=reply.length ||
+       ((reply[38]|(reply[39]<<8))!=1009)) {
+      throw const FormatException('Invalid NU printer ID response length');
+    }
+    final usbLen=(reply[40]<<8)|reply[41];
+    if(usbLen<4||usbLen>reply.length-40) {
+      throw const FormatException('Invalid IEEE 1284 device ID length');
+    }
+    final text=String.fromCharCodes(reply.sublist(42,40+usbLen));
+    if(!text.contains('MFG:Canon') || !text.contains('CMD:')) {
+      throw const FormatException('Printer ID is not a Canon IEEE 1284 record');
+    }
+    return text;
+  }
+
+  /// Performs one read-only USB printer-class request over the existing
+  /// verified NU connection. This does NOT claim an interface or print.
+  Future<String> readPrinterId() async {
+    final socket=_socket;
+    if(!isConnected||socket==null||printerInterface==null) {
+      throw StateError('Verify Canon USB configuration first');
+    }
+    try {
+      socket.add(capturedPrinterIdRequest());
+      await socket.flush();
+      final header=await _readExact(40,const Duration(seconds:5));
+      if(header[0]!=0x55||header[1]!=0x4e||
+         header[2]!=0x54||header[3]!=0x24){
+        throw const FormatException('No NU printer class response');
+      }
+      final length=((header[4]<<8)|header[5])+32;
+      if(length<44 || length>2048){
+        throw const FormatException('Printer ID response exceeds safe bounds');
+      }
+      final rest=await _readExact(length-40,const Duration(seconds:5));
+      final combined=Uint8List.fromList([...header,...rest]);
+      final result=parsePrinterIdReply(combined);
+      ieee1284DeviceId=result;
+      return result;
+    } catch (_) {
+      await disconnect();
+      rethrow;
+    }
   }
 
   static bool verifiesCanon(Uint8List reply) {
@@ -213,6 +290,7 @@ class NuCanonConnection {
   Future<void> disconnect() async {
     _connectedHost=null;
     configuration=null;
+    ieee1284DeviceId=null;
     final subscription=_subscription;
     _subscription=null;
     await subscription?.cancel();
