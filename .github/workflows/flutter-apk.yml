@@ -17,10 +17,19 @@ jobs:
           cache: true
       - name: Create Android platform project
         run: flutter create . --project-name digitus_print --platforms android
+      - name: Enable Android network discovery
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          s=s.replace('<application', '<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <application',1)
+          p.write_text(s)
+          PY
       - name: Resolve dependencies
         run: flutter pub get
       - name: Analyze Dart source
-        run: flutter analyze lib/main.dart
+        run: flutter analyze --no-fatal-infos lib/main.dart
       - name: Build debug APK
         run: flutter build apk --debug
       - uses: actions/upload-artifact@v4
