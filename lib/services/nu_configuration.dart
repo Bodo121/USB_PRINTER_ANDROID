@@ -21,6 +21,12 @@ class NuInterface {
     }
     return null;
   }
+  NuEndpoint? get bulkIn {
+    for(final endpoint in endpoints){
+      if(endpoint.isBulk && endpoint.isIn)return endpoint;
+    }
+    return null;
+  }
 }
 class NuConfiguration {
   const NuConfiguration(this.totalLength,this.interfaces);
