@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'usb_port_diagnostics.dart';
 
-/// Passive decoder for the DA-70251's observed DCP$ UDP announcements.
+/// Passive decoder for the DA-70251's observed DCP\$ UDP announcements.
 /// Derived from the owner's actual NU V1.25 Windows capture, not KCodes NetUSB.
 /// No device-claim, configuration, or print commands are transmitted.
 class DcpHubInfo {
@@ -37,20 +37,20 @@ class DcpPacket {
         .join(':').toUpperCase();
 
   static DcpHubInfo? parse(Uint8List bytes,String sourceIp) {
-    // 1059-byte DCP$ response in owner's PCAP:
+    // 1059-byte DCP\$ response in owner's PCAP:
     // bytes 16..21 = MAC, 32 = number of physical sockets, 40 = name,
-    // EST$ at 104, with IP at 114; nested per-device DCP$ at offset 176.
+    // EST\$ at 104, with IP at 114; nested per-device DCP\$ at offset 176.
     if(bytes.length<104 || bytes.length>4096) return null;
-    if(_str(bytes,0,4)!='DCP$')return null;
+    if(_str(bytes,0,4)!='DCP\$')return null;
     if(!UsbPortDiagnostics.privateIpv4(sourceIp))return null;
     final mac=_mac(bytes,16);
-    final detailed=bytes.length>=176 && _str(bytes,104,4)=='EST$';
+    final detailed=bytes.length>=176 && _str(bytes,104,4)=='EST\$';
     final name=detailed?_str(bytes,40,64):'DA-70251 USB sharing server';
     final sockets=bytes[32];
     final embeddedIp=detailed?_ip(bytes,114):_ip(bytes,48);
     if(sockets<1 || sockets>16 || name.isEmpty || embeddedIp!=sourceIp)return null;
     String? device,manufacturer,serial;
-    if(detailed && bytes.length>=288 && _str(bytes,176,4)=='DCP$'){
+    if(detailed && bytes.length>=288 && _str(bytes,176,4)=='DCP\$'){
       device=_str(bytes,200,32);
       manufacturer=_str(bytes,232,40);
       serial=_str(bytes,272,16);
@@ -118,7 +118,7 @@ class DcpDiscovery {
       await done.future.timeout(duration,onTimeout:(){});
       final info=best;
       return DcpListenResult(info,info==null
-        ? 'No DCP$ advertisement observed on UDP 52330/52340. '
+        ? 'No DCP\$ advertisement observed on UDP 52330/52340. '
           'The hub may be quiet or Wi-Fi broadcast isolation may be enabled.'
         : info.reportedDevice!=null
           ? 'DA-70251 detailed device list received.'
