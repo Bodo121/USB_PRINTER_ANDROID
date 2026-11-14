@@ -257,11 +257,12 @@ class NuCanonConnection {
 
   /// Process an entire pending window. Independent correlation is essential:
   /// the 02/09 prep response can arrive after later 02/03/02/05 replies.
-  Future<int> _drainTracked(NuPendingReplies pending) async {
+  Future<int> _drainTracked(NuPendingReplies pending,
+      {bool requirePreparation=false}) async {
     var completedOut=0;
     // Do not block on 02/09 alone: Windows receives prep40 after
     // OUT and IN replies for sequences 41-50.
-    while(pending.hasDataPending) {
+    while(requirePreparation?!pending.isEmpty:pending.hasDataPending) {
       final oldest=pending.oldest!;
       final remaining=oldest.deadline.difference(DateTime.now());
       if(remaining<=Duration.zero) {
@@ -354,9 +355,8 @@ class NuCanonConnection {
         matchedBytes+=await _drainTracked(pending);
       }
       if(!pending.isEmpty) {
-        _logPrint('NOTE '+pending.length.toString()+
-          ' NU prep replies still outstanding after final OUT; '+
-          'do not assume USB setup completed');
+        _logPrint('WAIT delayed 02/09 prep reply after other bulk replies');
+        matchedBytes+=await _drainTracked(pending,requirePreparation:true);
       }
       _logPrint('END matching NU bulk OUT replies for '+
         matchedBytes.toString()+' bytes; PHYSICAL PRINT UNVERIFIED');
@@ -371,6 +371,9 @@ class NuCanonConnection {
       await disconnect();
       rethrow;
     }finally{
+      // A late response from this session must never be mistaken for a
+      // reply to a subsequent print attempt using sequence 40 again.
+      await disconnect();
       _printing=false;
     }
   }
